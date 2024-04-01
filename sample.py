@@ -57,12 +57,12 @@
 # # Save the video
 # vec_env.close()
 
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.env_util import make_vec_env,make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack
 
 env_id = "CartPole-v1"
-model_path = "/mnt/nfs/work/c98181/rl-baselines3-zoo/rl-trained-agents/dqn/CartPole-v1_1/CartPole-v1.zip"  # 模型文件的路径
+model_path = "/mnt/nfs/work/c98181/rl-baselines3-zoo/rl-trained-agents/ppo/CartPole-v1_1/CartPole-v1.zip"  # 模型文件的路径
 # env_id = "MsPacmanNoFrameskip-v4"
 # model_path = "/mnt/nfs/work/c98181/rl-baselines3-zoo/rl-trained-agents/dqn/MsPacmanNoFrameskip-v4_1/MsPacmanNoFrameskip-v4.zip" # 模型文件的路径
 
@@ -76,7 +76,7 @@ env = make_vec_env(env_id, n_envs=1)
 # if is_image_space(env.observation_space):
 #     env = VecTransposeImage(env)
 
-model = DQN.load(model_path, env=env)
+model = PPO.load(model_path, env=env)
 # print model size
 # print(model.policy)
 
@@ -88,7 +88,7 @@ obs = env.reset()
 # print(initial_obs)
 done = False
 # sample 1M steps for CartPole and save to a numpy file
-n_steps = 1000000
+n_steps = 28000
 obs_list = []
 actions_list = []
 rewards_list = []
@@ -111,10 +111,10 @@ obs_list = np.array(obs_list)
 actions_list = np.array(actions_list)
 rewards_list = np.array(rewards_list)
 dones_list = np.array(dones_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_1M_obs.npy", obs_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_1M_actions.npy", actions_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_1M_rewards.npy", rewards_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_1M_dones.npy", dones_list)
+np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+f"_28000_obs.npy", obs_list)
+np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_actions.npy", actions_list)
+np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_rewards.npy", rewards_list)
+np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_dones.npy", dones_list)
 
 #　plot the score
 import matplotlib.pyplot as plt
@@ -123,5 +123,5 @@ plt.xlabel("Episodes")
 
 plt.ylabel("Rewards")
 plt.title("Rewards of DQN on "+env_id)
-plt.savefig("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_1M_rewards.png")
+plt.savefig("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_rewards.png")
 plt.show()
