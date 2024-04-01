@@ -77,6 +77,10 @@ env = make_vec_env(env_id, n_envs=1)
 #     env = VecTransposeImage(env)
 
 model = DQN.load(model_path, env=env)
+# print model size
+# print(model.policy)
+
+
 import numpy as np
 from tqdm import tqdm
 obs = env.reset()
@@ -84,7 +88,7 @@ obs = env.reset()
 # print(initial_obs)
 done = False
 # sample 1M steps for CartPole and save to a numpy file
-n_steps = 100000
+n_steps = 1000000
 obs_list = []
 actions_list = []
 rewards_list = []
