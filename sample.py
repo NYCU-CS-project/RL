@@ -90,23 +90,31 @@ done = False
 # sample 1M steps for CartPole and save to a numpy file
 n_steps = 28000
 obs_list = []
+next_obs_list = []
 actions_list = []
 rewards_list = []
 dones_list = []
+info_list = []
 score_list=[]
 reward_sum = 0
-for _ in tqdm(range(n_steps)):
-    action, _ = model.predict(obs, deterministic=True)
-    obs, reward, done, _ = env.step(action)
+
+for i in tqdm(range(n_steps)):
+    action, _states = model.predict(obs, deterministic=True)
+    next_obs, rewards, dones, info = env.step(action)
+    
+    reward_sum += rewards[0]
     obs_list.append(obs)
+    next_obs_list.append(next_obs)
     actions_list.append(action)
-    rewards_list.append(reward)
-    dones_list.append(done)
-    reward_sum += reward
-    if done:
+    rewards_list.append(rewards)
+    dones_list.append(dones)
+    info_list.append(info)
+    obs = next_obs
+    if dones[0]:
         score_list.append(reward_sum)
         reward_sum = 0
         obs = env.reset()
+    
 obs_list = np.array(obs_list)
 actions_list = np.array(actions_list)
 rewards_list = np.array(rewards_list)
@@ -115,6 +123,8 @@ np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+f"_28000_obs.npy", obs_list)
 np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_actions.npy", actions_list)
 np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_rewards.npy", rewards_list)
 np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_dones.npy", dones_list)
+np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_info.npy", info_list)
+np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_next_obs.npy", next_obs_list)
 
 #　plot the score
 import matplotlib.pyplot as plt
