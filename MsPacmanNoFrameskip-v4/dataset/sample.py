@@ -23,9 +23,10 @@ import numpy as np
 from tqdm import tqdm
 obs = env.reset()
 done = False
-# sample 10M steps
-# n_steps = 10000000
-num_episodes = 100
+# sample 1M steps
+n_steps = 100000
+# num_episodes = 100
+
 obs_list = []
 next_obs_list = []
 actions_list = []
@@ -34,30 +35,22 @@ dones_list = []
 info_list = []
 score_list=[]
 reward_sum = 0
-now=0
-while now<num_episodes:
-    obs = env.reset()
-    
-    done = False
-    while not done:
-        action, _states = model.predict(obs, deterministic=True)
-        next_obs, rewards, dones, info = env.step(action)
-        
-        reward_sum += rewards[0]
-        obs_list.append(obs)
-        next_obs_list.append(next_obs)
-        actions_list.append(action)
-        rewards_list.append(rewards)
-        dones_list.append(dones)
-        info_list.append(info)
-        obs = next_obs
-        if dones[0]:
-            score_list.append(reward_sum)
-            reward_sum = 0
-            now+=1
-            obs = env.reset()
-            print(f"Episode {now} finished")
-            break
+for i in tqdm(range(n_steps)):
+    action, _states = model.predict(obs, deterministic=True)
+    next_obs, reward, done, info = env.step(action)
+    reward_sum += reward
+    obs_list.append(obs)
+    next_obs_list.append(next_obs)
+    actions_list.append(action)
+    rewards_list.append(reward)
+    dones_list.append(done)
+    info_list.append(info)
+    obs = next_obs
+    if done:
+        obs = env.reset()
+        score_list.append(reward_sum)
+        reward_sum = 0
+
 obs_list = np.array(obs_list)
 actions_list = np.array(actions_list)
 rewards_list = np.array(rewards_list)
