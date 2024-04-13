@@ -11,6 +11,8 @@ print(model_path)
 from stable_baselines3.common.vec_env import VecTransposeImage, DummyVecEnv
 from stable_baselines3.common.preprocessing import is_image_space
 env = make_atari_env(env_id, n_envs=1)
+env = VecTransposeImage(env)            # 确保图像通道在前
+
 env=VecFrameStack(env, n_stack=4)
 
 model = DQN.load(model_path, env=env)
@@ -22,7 +24,8 @@ from tqdm import tqdm
 obs = env.reset()
 done = False
 # sample 10M steps
-n_steps = 10000000
+# n_steps = 10000000
+num_episodes = 100
 obs_list = []
 next_obs_list = []
 actions_list = []
@@ -31,24 +34,30 @@ dones_list = []
 info_list = []
 score_list=[]
 reward_sum = 0
-
-for i in tqdm(range(n_steps)):
-    action, _states = model.predict(obs, deterministic=True)
-    next_obs, rewards, dones, info = env.step(action)
+now=0
+while now<num_episodes:
+    obs = env.reset()
     
-    reward_sum += rewards[0]
-    obs_list.append(obs)
-    next_obs_list.append(next_obs)
-    actions_list.append(action)
-    rewards_list.append(rewards)
-    dones_list.append(dones)
-    info_list.append(info)
-    obs = next_obs
-    if dones[0]:
-        score_list.append(reward_sum)
-        reward_sum = 0
-        obs = env.reset()
-    
+    done = False
+    while not done:
+        action, _states = model.predict(obs, deterministic=True)
+        next_obs, rewards, dones, info = env.step(action)
+        
+        reward_sum += rewards[0]
+        obs_list.append(obs)
+        next_obs_list.append(next_obs)
+        actions_list.append(action)
+        rewards_list.append(rewards)
+        dones_list.append(dones)
+        info_list.append(info)
+        obs = next_obs
+        if dones[0]:
+            score_list.append(reward_sum)
+            reward_sum = 0
+            now+=1
+            obs = env.reset()
+            print(f"Episode {now} finished")
+            break
 obs_list = np.array(obs_list)
 actions_list = np.array(actions_list)
 rewards_list = np.array(rewards_list)
@@ -69,3 +78,13 @@ plt.ylabel("Rewards")
 plt.title("Rewards of sample on "+env_id)
 plt.savefig(os.path.join(os.path.dirname(__file__),"rewards.png"))
 plt.show()
+
+# import agc.dataset as ds
+# import agc.util as util
+
+# # DATA_DIR is the directory, which contains the 'trajectories' and 'screens' folders
+# dataset = ds.AtariDataset(DATA_DIR)
+
+
+# # dataset.trajectories returns the dictionary with all the trajs from the dataset
+# all_trajectories = dataset.trajectories
