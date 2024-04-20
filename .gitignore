@@ -1,5 +1,7 @@
 obs.npy
 next_obs.npy
+actions.npy
 MsPacmanNoFrameskip-v4/dataset/next_obs.npy
 MsPacmanNoFrameskip-v4/dataset/obs.npy
 MsPacmanNoFrameskip-v4/dataset/next_obs.npy
+Walker2d-v1/dataset/actions.npy
