@@ -26,7 +26,7 @@ model = load_policy(
     env_name="seals/Walker2d-v1",
     venv=env,
 )
-rollout_info = rollout.generate_trajectories(model, env,rollout.make_sample_until(min_timesteps=10000000, min_episodes=None),rng=np.random.default_rng())
+rollout_info = rollout.generate_trajectories(model, env,rollout.make_sample_until(min_timesteps=100000, min_episodes=None),rng=np.random.default_rng())
 # print(rollout_info[0])
 transitions = rollout.flatten_trajectories(rollout_info)
 print(transitions.obs.shape)
