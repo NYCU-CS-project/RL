@@ -12,7 +12,7 @@ import torch
 # print(env.step([1,1,1,1,1,1]))
 # test env
 env = make_vec_env(
-    "seals:seals/Walker2d-v1",
+    "seals:seals/Humanoid-v1",
     rng=np.random.default_rng(),
     post_wrappers=[
         lambda env, _: RolloutInfoWrapper(env)
@@ -23,9 +23,10 @@ env = make_vec_env(
 model = load_policy(
     "ppo-huggingface",
     organization="HumanCompatibleAI",
-    env_name="seals/Walker2d-v1",
+    env_name="seals:seals/Humanoid-v1",
     venv=env,
 )
+print(model)
 # rollout_info = rollout.generate_trajectories(model, env,rollout.make_sample_until(min_timesteps=None, min_episodes=1),rng=np.random.default_rng())
 # # print(rollout_info[0])
 # transitions = rollout.flatten_trajectories(rollout_info)
@@ -36,7 +37,7 @@ from tqdm import tqdm
 obs = env.reset()
 done = False
 # n_steps = 10000000
-num_episodes = 1
+num_episodes = 5
 
 obs_list = []
 next_obs_list = []
@@ -81,3 +82,12 @@ import matplotlib.pyplot as plt
 
 plt.plot(score_list)
 plt.savefig(os.path.join(os.path.dirname(__file__),"score.png"))
+# print shape
+print(obs.shape)
+print(acts.shape)
+print(np.array(rewards_list).shape)
+print(np.array(dones_list).shape)
+print(np.array(info_list).shape)
+print(np.array(next_obs_list).shape)
+
+np.savez("/mnt/nfs/work/c98181/cfil/CFIL/expert_datasets/spinningup_data/Humanoid-v2.npz", states=obs_list, actions=actions_list, next_states=next_obs_list, dones=dones_list, rewards=rewards_list)

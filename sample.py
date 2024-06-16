@@ -1,61 +1,4 @@
-# import gymnasium as gym
 
-# from stable_baselines3 import DQN
-# from stable_baselines3.common.evaluation import evaluate_policy
-# from stable_baselines3.common.vec_env import VecVideoRecorder, DummyVecEnv
-
-
-# env_id = "CartPole-v1"
-# # Create environment
-# env = gym.make(env_id, render_mode="rgb_array")
-
-# # Instantiate the agent
-# model = DQN("MlpPolicy", env, verbose=1)
-# # Train the agent and display a progress bar
-# model.learn(total_timesteps=int(2e5), progress_bar=True)
-# # Save the agent
-# model.save(env_id)
-# del model  # delete trained model to demonstrate loading
-
-# # Load the trained agent
-# # NOTE: if you have loading issue, you can pass `print_system_info=True`
-# # to compare the system on which the model was trained vs the current one
-# # model = DQN.load("dqn_lunar", env=env, print_system_info=True)
-# model = DQN.load(env_id, env=env)
-
-# # Evaluate the agent
-# # NOTE: If you use wrappers with your environment that modify rewards,
-# #       this will be reflected here. To evaluate with original rewards,
-# #       wrap environment in a "Monitor" wrapper before other wrappers.
-# mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=10)
-
-# # # Enjoy trained agent
-# # vec_env = model.get_env()
-# # obs = vec_env.reset()
-# # for i in range(1000):
-# #     action, _states = model.predict(obs, deterministic=True)
-# #     obs, rewards, dones, info = vec_env.step(action)
-# #     vec_env.render("human")
-
-
-# video_folder = "logs/videos/"
-# video_length = 1000
-
-# vec_env = DummyVecEnv([lambda: gym.make(env_id, render_mode="rgb_array")])
-
-# obs = vec_env.reset()
-
-# # Record the video starting at the first step
-# vec_env = VecVideoRecorder(vec_env, video_folder,
-#                        record_video_trigger=lambda x: x == 0, video_length=video_length,
-#                        name_prefix=f"{env_id}")
-
-# vec_env.reset()
-# for _ in range(video_length + 1):
-#     action, _states = model.predict(obs, deterministic=True)
-#     obs, rewards, dones, info = vec_env.step(action)
-# # Save the video
-# vec_env.close()
 
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.env_util import make_vec_env,make_atari_env
@@ -88,7 +31,8 @@ obs = env.reset()
 # print(initial_obs)
 done = False
 # sample 1M steps for CartPole and save to a numpy file
-n_steps = 28000
+n_trajectories = 5
+# n_steps = 28000
 obs_list = []
 next_obs_list = []
 actions_list = []
@@ -98,7 +42,7 @@ info_list = []
 score_list=[]
 reward_sum = 0
 
-for i in tqdm(range(n_steps)):
+while True:
     action, _states = model.predict(obs, deterministic=True)
     next_obs, rewards, dones, info = env.step(action)
     
@@ -114,18 +58,27 @@ for i in tqdm(range(n_steps)):
         score_list.append(reward_sum)
         reward_sum = 0
         obs = env.reset()
-    
+        n_trajectories -= 1
+        if n_trajectories == 0:
+            break
+
 obs_list = np.array(obs_list)
 actions_list = np.array(actions_list)
 rewards_list = np.array(rewards_list)
 dones_list = np.array(dones_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+f"_28000_obs.npy", obs_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_actions.npy", actions_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_rewards.npy", rewards_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_dones.npy", dones_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_info.npy", info_list)
-np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_next_obs.npy", next_obs_list)
-
+# np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+f"_28000_obs.npy", obs_list)
+# np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_actions.npy", actions_list)
+# np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_rewards.npy", rewards_list)
+# np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_dones.npy", dones_list)
+# np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_info.npy", info_list)
+# np.save("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_next_obs.npy", next_obs_list)
+print(obs_list.shape)
+print(actions_list.shape)
+print(rewards_list.shape)
+print(dones_list.shape)
+# print(info_list)
+print(next_obs_list.shape)
+# print(score_list)
 #　plot the score
 import matplotlib.pyplot as plt
 plt.plot(score_list)
@@ -135,3 +88,6 @@ plt.ylabel("Rewards")
 plt.title("Rewards of DQN on "+env_id)
 plt.savefig("/mnt/nfs/work/c98181/RL/dataset/"+env_id+"_28000_rewards.png")
 plt.show()
+
+# save to /mnt/nfs/work/c98181/cfil/CFIL/expert_datasets/spinningup_data/Humanoid-v2.npz
+# format is ['states', 'actions', 'next_states', 'dones', 'rewards']
