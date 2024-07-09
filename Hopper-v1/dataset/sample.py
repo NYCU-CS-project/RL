@@ -16,7 +16,7 @@ import os
 SEED = 42
 result=[]
 env = make_vec_env(
-    "seals:seals/Ant-v1",
+    "seals:seals/Hopper-v1",
     rng=np.random.default_rng(),
     post_wrappers=[
         lambda env, _: RolloutInfoWrapper(env)
@@ -27,7 +27,7 @@ env = make_vec_env(
 expert = load_policy(
     "ppo-huggingface",
     organization="HumanCompatibleAI",
-    env_name="seals:seals/Ant-v1",
+    env_name="seals:seals/Hopper-v1",
     venv=env,
 )
 # Generate expert rollouts
