@@ -34,7 +34,7 @@ expert = load_policy(
 rollouts = rollout.rollout(
     expert,
     env,
-    rollout.make_sample_until(min_timesteps=None, min_episodes=5),
+    rollout.make_sample_until(min_timesteps=None, min_episodes=50),
     rng=np.random.default_rng(SEED),
 )
 
