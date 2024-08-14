@@ -152,7 +152,9 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             total_margin += margin
 
             logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
-            losses = -torch.nn.functional.logsigmoid(beta * logits)
+            # losses = -torch.nn.functional.logsigmoid(beta * logits)
+            # hinge loss
+            losses = torch.nn.functional.relu(1 - beta * logits)
             loss = losses.mean()
             # check nan
             if torch.isnan(loss).any():
@@ -164,7 +166,7 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             # torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
             sac_agent.pi_optimizer.step()
 
-    prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+    # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
 
     total_loss = total_loss / (epochs * expert_states.shape[0])
     return total_loss, total_margin, total_positive_reward, total_negative_reward
@@ -179,7 +181,114 @@ def gaussian_kl_divergence(mu1, sigma1, mu2, sigma2):
     var2 = sigma2.pow(2)
     kl = (var1 / var2 + (mu2 - mu1).pow(2) / var2 - 1 + var2.log() - var1.log()).sum(-1) * 0.5
     return kl.mean()
+def strange_DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epochs=100):
+    assert expert_states.shape[0] == expert_actions.shape[0]
+    prev_model.eval()
+    batch_size = 1000
+    total_loss = 0
+    total_margin = 0
+    total_positive_reward = 0
+    total_negative_reward = 0
+    beta = 0.1
+    total_demo_loss=0
 
+    for i in range(epochs):
+        # for batch_no in range(expert_states.shape[0] // batch_size):
+        #     start_id = batch_no * batch_size
+        #     end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
+        #     state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
+        #     chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
+            
+        #     policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+        #     with torch.no_grad():
+                
+        #         reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+
+        #     losses = -(policy_chosen_logps - reference_chosen_logps)
+        #     loss = losses.mean()
+        #     # check nan
+        #     total_demo_loss += loss.sum()
+
+        #     sac_agent.pi_optimizer.zero_grad()
+        #     loss.backward()
+        #     # torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+        #     sac_agent.pi_optimizer.step()
+    
+        for batch_no in range(expert_states.shape[0] // batch_size):
+            start_id = batch_no * batch_size
+            end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
+            state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
+            chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
+            # check nan
+            if torch.isnan(chosen_act).any():
+                print("nan in expert actions")
+                
+
+            # Use the new forward method for sampling
+            if greedy:
+                reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=True, with_logprob=True)
+            else:
+                reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=False, with_logprob=True)
+            #clamp the reject action to the action space
+            epsilon=1e-6
+            reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
+            # check nan
+            if torch.isnan(reject_act).any():
+                print("nan in reject actions")
+            
+            # Calculate log probabilities for chosen actions
+            
+            policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+            # check nan
+            if torch.isnan(policy_chosen_logps).any():
+                print("nan in policy_chosen_logps")
+
+            with torch.no_grad():
+                
+                reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+                # check nan
+                if torch.isnan(reference_chosen_logps).any():
+                    print("nan in reference_chosen_logps")
+                
+                reference_rejected_logps = prev_model.log_prob(state, reject_act)
+                # check nan
+                if torch.isnan(reference_rejected_logps).any():
+                    print("nan in reference_rejected_logps")
+                    print(reject_act)
+                    print(reference_rejected_logps)
+                    #print the reject where reference_rejected_logps is nan
+                    print(reject_act[torch.isnan(reference_rejected_logps)]) 
+
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            reject_logratios = policy_rejected_logps - reference_rejected_logps
+            
+            positive_reward = chosen_logratios.detach().mean().item()
+            negative_reward = reject_logratios.detach().mean().item()
+            margin = positive_reward - negative_reward
+            
+            total_positive_reward += positive_reward
+            total_negative_reward += negative_reward
+            total_margin += margin
+
+            logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
+            # losses = -torch.nn.functional.logsigmoid(beta * logits)-(policy_chosen_logps-reference_chosen_logps)
+            # hinge loss
+            losses = torch.nn.functional.relu(1 - beta * logits)-(policy_chosen_logps-reference_chosen_logps)
+            loss = losses.mean()
+            # check nan
+            if torch.isnan(loss).any():
+                print("nan in loss")
+            total_loss += loss.sum()
+
+            sac_agent.pi_optimizer.zero_grad()
+            loss.backward()
+            # torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+            sac_agent.pi_optimizer.step()
+
+    # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+
+    total_loss = total_loss / (epochs * expert_states.shape[0])
+    return total_loss, total_margin, total_positive_reward, total_negative_reward, total_demo_loss
 def KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epochs=100):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
@@ -259,7 +368,40 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epoc
 
     total_loss = total_loss / (epochs * expert_states.shape[0])
     return total_loss, total_margin, total_positive_reward, total_negative_reward
+def strange_BC(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epochs=100):
+    assert expert_states.shape[0] == expert_actions.shape[0]
+    prev_model.eval()
+    batch_size = 1000
+    total_loss = 0
+    total_margin = 0
+    total_positive_reward = 0
+    total_negative_reward = 0
+    beta = 0.1
 
+    for i in range(epochs):
+        for batch_no in range(expert_states.shape[0] // batch_size):
+            start_id = batch_no * batch_size
+            end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
+            state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
+            chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
+            
+            policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+            with torch.no_grad():
+                
+                reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+
+            losses = -(policy_chosen_logps - reference_chosen_logps)
+            loss = losses.mean()
+            # check nan
+            total_loss += loss.sum()
+
+            sac_agent.pi_optimizer.zero_grad()
+            loss.backward()
+            # torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+            sac_agent.pi_optimizer.step()
+
+    total_loss = total_loss / (epochs * expert_states.shape[0])
+    return total_loss
 def mse_bc(sac_agent, expert_states, expert_actions, epochs = 100):
     assert expert_states.shape[0] == expert_actions.shape[0]
     batch_size = 1000
@@ -283,7 +425,106 @@ def mse_bc(sac_agent, expert_states, expert_actions, epochs = 100):
     total_loss = total_loss/(epochs*expert_states.shape[0])
 
     return total_loss               
-    
+def strange_KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epochs=100):
+    assert expert_states.shape[0] == expert_actions.shape[0]
+    prev_model.eval()
+    batch_size = 1000
+    total_loss = 0
+    total_margin = 0
+    total_positive_reward = 0
+    total_negative_reward = 0
+    beta = 0.1
+    desirable_weight = 1.0  # You can adjust this weight
+    undesirable_weight = 1.0  # You can adjust this weight
+    LOG_STD_MIN = -20
+    LOG_STD_MAX = 2
+    total_demo_loss = 0
+
+    for i in range(epochs):
+        # for batch_no in range(expert_states.shape[0] // batch_size):
+        #     start_id = batch_no * batch_size
+        #     end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
+        #     state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
+        #     chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
+
+        #     policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+        #     with torch.no_grad():
+        #         reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+
+        #     losses = -(policy_chosen_logps - reference_chosen_logps)
+        #     loss = losses.mean()
+        #     # check nan
+        #     total_demo_loss += loss.sum()
+
+        #     sac_agent.pi_optimizer.zero_grad()
+        #     loss.backward()
+        #     # torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+        #     sac_agent.pi_optimizer.step()
+
+        for batch_no in range(expert_states.shape[0] // batch_size):
+            start_id = batch_no * batch_size
+            end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
+            state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
+            chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
+
+            # Use the forward method for sampling
+            if greedy:
+                reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=True, with_logprob=True)
+            else:
+                reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=False, with_logprob=True)
+
+            # Clamp the reject action to the action space
+            epsilon = 1e-6
+            reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
+
+            # Calculate log probabilities for chosen actions
+            policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+
+            # Calculate KL divergence
+            net_out = sac_agent.ac.pi.net(state)
+            policy_mu = sac_agent.ac.pi.mu_layer(net_out)
+            policy_log_std = torch.clamp(sac_agent.ac.pi.log_std_layer(net_out), LOG_STD_MIN, LOG_STD_MAX)
+            policy_std = torch.exp(policy_log_std)
+
+            with torch.no_grad():
+                prev_net_out = prev_model.net(state)
+                prev_mu = prev_model.mu_layer(prev_net_out)
+                prev_log_std = torch.clamp(prev_model.log_std_layer(prev_net_out), LOG_STD_MIN, LOG_STD_MAX)
+                prev_std = torch.exp(prev_log_std)
+
+                reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+                reference_rejected_logps = prev_model.log_prob(state, reject_act)
+
+            kl_divergence = gaussian_kl_divergence(policy_mu, policy_std, prev_mu, prev_std)
+
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            reject_logratios = policy_rejected_logps - reference_rejected_logps
+
+            positive_reward = chosen_logratios.detach().mean().item()
+            negative_reward = reject_logratios.detach().mean().item()
+            margin = positive_reward - negative_reward
+
+            total_positive_reward += positive_reward
+            total_negative_reward += negative_reward
+            total_margin += margin
+
+            # Corrected KTO loss calculation
+            chosen_losses = 1 - torch.sigmoid(beta * (chosen_logratios - kl_divergence))
+            rejected_losses = 1 - torch.sigmoid(beta * (kl_divergence - reject_logratios))
+
+            losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
+            loss = losses.mean()
+
+            total_loss += loss.item()
+
+            sac_agent.pi_optimizer.zero_grad()
+            loss.backward()
+            sac_agent.pi_optimizer.step()
+            
+
+    total_loss = total_loss / (epochs * expert_states.shape[0])
+    return total_loss, total_margin, total_positive_reward, total_negative_reward, total_demo_loss
+
 
 
 
@@ -322,10 +563,20 @@ if __name__ == "__main__":
         method = "NLL"
     elif sys.argv[2] == "MSE":
         method = "MSE"
+    elif sys.argv[2] == "strange_DPO":
+        method = "strange_DPO"
+        is_DPO = True
+    elif sys.argv[2] == "strange_KTO":
+        method = "strange_KTO"
+        is_KTO = True
+    elif sys.argv[2] == "strange_BC":
+        method = "strange_BC"
     else:
         # throw error
         print("Invalid method")
         exit(1)
+    warmup_itr = 20
+    prev_load_freq = 1
         
 
     # common parameters
@@ -404,7 +655,7 @@ if __name__ == "__main__":
     # method = "MSE"
     # method = "DPO_greedy"
     # method = "DPO_stochastic"
-    if is_DPO or is_KTO:
+    if is_DPO or is_KTO or method=="strange_BC":
         prev_model = copy.deepcopy(sac_agent.ac.pi)
         margin_graph = []
         positive_reward_graph = []
@@ -415,6 +666,8 @@ if __name__ == "__main__":
             loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
         elif method == "MSE":
             loss = mse_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+        elif method == "strange_BC":
+            loss = strange_BC(sac_agent, prev_model, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
         elif method == "DPO_greedy":
             prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
             loss,margin,pos,neg = DPO(sac_agent,prev_model, expert_states, expert_actions, greedy=True,epochs = v['bc']['eval_freq'])
@@ -428,8 +681,9 @@ if __name__ == "__main__":
             negative_reward_graph.append(neg)
             margin_graph.append(margin)
         elif method == "DPO_greedy_warmup":
-            if itr < 10:
+            if itr < warmup_itr:
                 loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
             else:
                 # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
                 loss,margin,pos,neg = DPO(sac_agent,prev_model, expert_states, expert_actions, greedy=True,epochs = v['bc']['eval_freq'])
@@ -437,8 +691,9 @@ if __name__ == "__main__":
                 negative_reward_graph.append(neg)
                 margin_graph.append(margin)
         elif method == "DPO_stochastic_warmup":
-            if itr < 10:
+            if itr < warmup_itr:
                 loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
             else:
                 # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
                 loss,margin,pos,neg = DPO(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
@@ -458,8 +713,9 @@ if __name__ == "__main__":
             negative_reward_graph.append(neg)
             margin_graph.append(margin)
         elif method == "KTO_greedy_warmup":
-            if itr < 10:
+            if itr < warmup_itr:
                 loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
             else:
                 # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
                 loss,margin,pos,neg = KTO(sac_agent,prev_model, expert_states, expert_actions, greedy=True,epochs = v['bc']['eval_freq'])
@@ -467,39 +723,70 @@ if __name__ == "__main__":
                 negative_reward_graph.append(neg)
                 margin_graph.append(margin)
         elif method == "KTO_stochastic_warmup":
-            if itr < 10:
+            if itr < warmup_itr:
                 loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
             else:
                 # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
                 loss,margin,pos,neg = KTO(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
                 positive_reward_graph.append(pos)
                 negative_reward_graph.append(neg)
                 margin_graph.append(margin)
+        elif method == "strange_DPO":
+            if itr%prev_load_freq == 0:
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            loss,margin,pos,neg,demons = strange_DPO(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
+            positive_reward_graph.append(pos)
+            negative_reward_graph.append(neg)
+            margin_graph.append(margin)
+        elif method == "strange_KTO":
+            if itr%prev_load_freq == 0:
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            loss,margin,pos,neg,demons = strange_KTO(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
+            positive_reward_graph.append(pos)
+            negative_reward_graph.append(neg)
+            margin_graph.append(margin)
         
 
         # draw loss real return det and sto
         
         if is_KTO:
-            if "warmup" in method and itr < 10:
-                logger.record_tabular("KTO warmup loss", loss.item())
-                loss_graph.append(loss.item())
-            else:
-                logger.record_tabular("KTO loss", loss)
-                logger.record_tabular("KTO margin", margin)
-                logger.record_tabular("KTO positive reward", pos)
-                logger.record_tabular("KTO negative reward", neg)
+            if method =="strange_KTO":
+                logger.record_tabular("strange KTO loss", loss)
+                logger.record_tabular("strange KTO margin", margin)
+                logger.record_tabular("strange KTO positive reward", pos)
+                logger.record_tabular("strange KTO negative reward", neg)
+                logger.record_tabular("strange KTO demonstration loss", demons.item())
                 loss_graph.append(loss)
+            else:
+                if "warmup" in method and itr < warmup_itr:
+                    logger.record_tabular("KTO warmup loss", loss.item())
+                    loss_graph.append(loss.item())
+                else:
+                    logger.record_tabular("KTO loss", loss)
+                    logger.record_tabular("KTO margin", margin)
+                    logger.record_tabular("KTO positive reward", pos)
+                    logger.record_tabular("KTO negative reward", neg)
+                    loss_graph.append(loss)
 
         elif is_DPO:
-            if "warmup" in method and itr < 10:
-                logger.record_tabular("DPO warmup loss", loss.item())
+            if method == "strange_DPO":
+                logger.record_tabular("strange DPO loss", loss.item())
+                logger.record_tabular("strange DPO margin", margin)
+                logger.record_tabular("strange DPO positive reward", pos)
+                logger.record_tabular("strange DPO negative reward", neg)
+                logger.record_tabular("strange DPO demonstration loss", demons)
                 loss_graph.append(loss.item())
             else:
-                logger.record_tabular("DPO loss", loss.item())
-                logger.record_tabular("DPO margin", margin)
-                logger.record_tabular("DPO positive reward", pos)
-                logger.record_tabular("DPO negative reward", neg)
-                loss_graph.append(loss.item())
+                if "warmup" in method and itr < warmup_itr:
+                    logger.record_tabular("DPO warmup loss", loss.item())
+                    loss_graph.append(loss.item())
+                else:
+                    logger.record_tabular("DPO loss", loss.item())
+                    logger.record_tabular("DPO margin", margin)
+                    logger.record_tabular("DPO positive reward", pos)
+                    logger.record_tabular("DPO negative reward", neg)
+                    loss_graph.append(loss.item())
         else:
             logger.record_tabular("BC loss", loss.item())
             loss_graph.append(loss.item())
@@ -510,6 +797,15 @@ if __name__ == "__main__":
         real_return_sto_graph.append(real_return_sto)
         logger.record_tabular("Iteration", itr)
         logger.dump_tabular()
+        with open(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv", "a") as f:
+            if is_DPO or is_KTO:
+                if "warmup" in method and itr < warmup_itr:
+                    f.write(f"{method}_warmup,{itr},{loss},{real_return_det},{real_return_sto}\n")
+                else:
+                    f.write(f"{method},{itr},{loss},{real_return_det},{real_return_sto},{margin},{pos},{neg}\n")
+            else:
+                f.write(f"{method},{itr},{loss},{real_return_det},{real_return_sto}\n")
+
     
     # draw loss real return det and sto by matplotlib
 
@@ -534,16 +830,8 @@ if __name__ == "__main__":
         plt.close()
 # add record loss real return det graph and sto graph to "baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv" there will be all kinds of method,dataframe column is method,itr,loss,real_return_det,real_return_sto,margin,positive_reward,negative_reward
 
-    with open(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv", "a") as f:
-        if is_DPO or is_KTO:
-            if "warmup" in method and itr < 10:
-                f.write(f"{method}_warmup,{itr},{loss},{real_return_det},{real_return_sto}\n")
-            else:
-                f.write(f"{method},{itr},{loss},{real_return_det},{real_return_sto},{margin},{pos},{neg}\n")
-        else:
-            f.write(f"{method},{itr},{loss},{real_return_det},{real_return_sto}\n")
 
-        
+            
     
 
  
