@@ -93,6 +93,9 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
     total_positive_reward = 0
     total_negative_reward = 0
     beta = 0.1
+    LOG_STD_MIN = -20
+    LOG_STD_MAX = 2
+
 
     for i in range(epochs):
         for batch_no in range(expert_states.shape[0] // batch_size):
@@ -100,46 +103,36 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
             state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
             chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
-            # check nan
-            if torch.isnan(chosen_act).any():
-                print("nan in expert actions")
-                
 
-            # Use the new forward method for sampling
+            # Use the forward method for sampling
             if greedy:
                 reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=True, with_logprob=True)
             else:
                 reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=False, with_logprob=True)
-            #clamp the reject action to the action space
-            epsilon=1e-6
+
+            # Clamp the reject action to the action space
+            epsilon = 1e-6
             reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
-            # check nan
-            if torch.isnan(reject_act).any():
-                print("nan in reject actions")
-            
+
             # Calculate log probabilities for chosen actions
-            
             policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
-            # check nan
-            if torch.isnan(policy_chosen_logps).any():
-                print("nan in policy_chosen_logps")
+
+            # Calculate KL divergence
+            net_out = sac_agent.ac.pi.net(state)
+            policy_mu = sac_agent.ac.pi.mu_layer(net_out)
+            policy_log_std = torch.clamp(sac_agent.ac.pi.log_std_layer(net_out), LOG_STD_MIN, LOG_STD_MAX)
+            policy_std = torch.exp(policy_log_std)
 
             with torch.no_grad():
-                
-                reference_chosen_logps = prev_model.log_prob(state, chosen_act)
-                # check nan
-                if torch.isnan(reference_chosen_logps).any():
-                    print("nan in reference_chosen_logps")
-                
-                reference_rejected_logps = prev_model.log_prob(state, reject_act)
-                # check nan
-                if torch.isnan(reference_rejected_logps).any():
-                    print("nan in reference_rejected_logps")
-                    print(reject_act)
-                    print(reference_rejected_logps)
-                    #print the reject where reference_rejected_logps is nan
-                    print(reject_act[torch.isnan(reference_rejected_logps)]) 
+                prev_net_out = prev_model.net(state)
+                prev_mu = prev_model.mu_layer(prev_net_out)
+                prev_log_std = torch.clamp(prev_model.log_std_layer(prev_net_out), LOG_STD_MIN, LOG_STD_MAX)
+                prev_std = torch.exp(prev_log_std)
 
+                reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+                reference_rejected_logps = prev_model.log_prob(state, reject_act)
+
+            kl_divergence = gaussian_kl_divergence(policy_mu, policy_std, prev_mu, prev_std)
             chosen_logratios = policy_chosen_logps - reference_chosen_logps
             reject_logratios = policy_rejected_logps - reference_rejected_logps
             
@@ -151,11 +144,43 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             total_negative_reward += negative_reward
             total_margin += margin
 
+
             logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
-            # losses = -torch.nn.functional.logsigmoid(beta * logits)
+            u1= torch.exp(policy_chosen_logps)/(torch.exp(reference_chosen_logps)+1e-6)+1e-6
+            u2= torch.exp(policy_rejected_logps)/(torch.exp(reference_rejected_logps)+1e-6)+1e-6
+
+
+            # reverse kl(original DPO)
+            losses = -torch.nn.functional.logsigmoid(beta * logits)
+
             # hinge loss
-            losses = torch.nn.functional.relu(1 - beta * logits)
-            loss = losses.mean()
+            # losses = torch.nn.functional.relu(1 - beta * logits)
+
+            # forward kl= -logsigmoid(-beta*(1/u1) + beta*(1/u2))
+            # losses = -torch.nn.functional.logsigmoid(-beta*(1/u1) + beta*(1/u2))
+
+            # JS divergence
+            # losses = -torch.nn.functional.logsigmoid(beta *(torch.log(2*u1/1+u1)-torch.log(2*u2/1+u2)))
+            # losses = -torch.nn.functional.logsigmoid(beta *(chosen_logratios - reject_logratios-torch.log(1+u1)+torch.log(1+u2)))
+
+            # alpha divergence
+            alpha=0.5 # alpha is in (0,1)
+            # losses = -torch.nn.functional.logsigmoid(beta *((1-u1**(-alpha))/(alpha)-(1-u2**(-alpha))/(alpha)))
+
+            # Total variation
+            #  u1>1? 1/2:-1/2
+            #  u2>1? 1/2:-1/2
+            # losses = -torch.nn.functional.logsigmoid(beta *(u1>1).float()-(u2>1).float())
+
+
+            # chi-squared divergence
+            # losses = -torch.nn.functional.logsigmoid(beta *(2*u1-2*u2))
+
+
+
+
+
+            loss = losses.mean()+kl_divergence
             # check nan
             if torch.isnan(loss).any():
                 print("nan in loss")
@@ -163,7 +188,7 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
 
             sac_agent.pi_optimizer.zero_grad()
             loss.backward()
-            # torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
             sac_agent.pi_optimizer.step()
 
     # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
@@ -571,6 +596,12 @@ if __name__ == "__main__":
         is_KTO = True
     elif sys.argv[2] == "strange_BC":
         method = "strange_BC"
+    elif sys.argv[2] == "strange_KTO_warmup":
+        method = "strange_KTO_warmup"
+        is_KTO = True
+    elif sys.argv[2] == "strange_DPO_warmup":
+        method = "strange_DPO_warmup"
+        is_DPO = True
     else:
         # throw error
         print("Invalid method")
@@ -746,6 +777,28 @@ if __name__ == "__main__":
             positive_reward_graph.append(pos)
             negative_reward_graph.append(neg)
             margin_graph.append(margin)
+        elif method == "strange_BC":
+            loss = strange_BC(sac_agent, prev_model, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+        elif method == "strange_KTO_warmup":
+            if itr < warmup_itr:
+                loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            else:
+                # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+                loss,margin,pos,neg,demons = strange_KTO(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
+                positive_reward_graph.append(pos)
+                negative_reward_graph.append(neg)
+                margin_graph.append(margin)
+        elif method == "strange_DPO_warmup":
+            if itr < warmup_itr:
+                loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            else:
+                # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+                loss,margin,pos,neg,demons = strange_DPO(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
+                positive_reward_graph.append(pos)
+                negative_reward_graph.append(neg)
+                margin_graph.append(margin)
         
 
         # draw loss real return det and sto
