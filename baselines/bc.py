@@ -83,7 +83,28 @@ def stochastic_bc(sac_agent, expert_states, expert_actions, epochs = 100):
 
 
     total_loss = total_loss / (epochs * expert_states.shape[0])
-    return total_loss               
+    return total_loss        
+from torch.distributions import Normal       
+def entropy(sac_agent, obs):
+    LOG_STD_MIN = -20
+    LOG_STD_MAX = 2
+    net_out = sac_agent.net(obs)
+    mu = sac_agent.mu_layer(net_out)
+    log_std = sac_agent.log_std_layer(net_out)
+    log_std = torch.clamp(log_std, LOG_STD_MIN, LOG_STD_MAX)
+    std = torch.exp(log_std)
+
+    # 计算高斯分布的熵
+    gaussian_entropy = 0.5 * torch.log(2 * np.pi * np.e * std**2).sum(-1)
+
+    # 计算 tanh 变换的修正项
+    pi_action = Normal(mu, std).rsample()
+    log_det_jacobian = (2 * (np.log(2) - pi_action - F.softplus(-2 * pi_action))).sum(-1)
+    
+    # 总熵 = 高斯熵 - log_det_jacobian
+    entropy = gaussian_entropy - log_det_jacobian
+
+    return entropy
 def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epochs=100):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
@@ -92,10 +113,11 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
     total_margin = 0
     total_positive_reward = 0
     total_negative_reward = 0
-    beta = 0.1
+    beta = 1
     LOG_STD_MIN = -20
     LOG_STD_MAX = 2
-
+    lambda_entropy = 0.001
+    epsilon = 1e-6
 
     for i in range(epochs):
         for batch_no in range(expert_states.shape[0] // batch_size):
@@ -103,6 +125,7 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
             state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
             chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
+            chosen_act= torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
 
             # Use the forward method for sampling
             if greedy:
@@ -111,7 +134,7 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
                 reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=False, with_logprob=True)
 
             # Clamp the reject action to the action space
-            epsilon = 1e-6
+            
             reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
 
             # Calculate log probabilities for chosen actions
@@ -151,7 +174,7 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
 
 
             # reverse kl(original DPO)
-            losses = -torch.nn.functional.logsigmoid(beta * logits)
+            # losses = -torch.nn.functional.logsigmoid(beta * logits)
 
             # hinge loss
             # losses = torch.nn.functional.relu(1 - beta * logits)
@@ -176,11 +199,35 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             # chi-squared divergence
             # losses = -torch.nn.functional.logsigmoid(beta *(2*u1-2*u2))
 
+            
 
 
 
 
-            loss = losses.mean()+kl_divergence
+            # loss = losses.mean()+kl_divergence
+            # loss = losses.mean()+0.97*policy_chosen_logps.mean()
+            # list the function of sac_agent.ac.pi
+
+            # loss = losses.mean()+kl_divergence - lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
+            # loss=losses.mean()-lambda_entropy * sac_agent.ac.pi.entropy(state).mean()
+
+            # real gail rewards
+
+            # L = logistic loss
+            losses= -torch.nn.functional.logsigmoid(logits)
+            # L = tanh loss
+            # losses = torch.nn.functional.tanh(logits)
+            # L = hinge loss
+            # losses = torch.nn.functional.relu(1 - beta * logits)
+            # exponential loss
+            # losses = -torch.exp(-beta * logits)
+            # L = Huber loss
+            # losses = torch.nn.functional.smooth_l1_loss(logits, torch.zeros_like(logits))
+
+
+            # loss = losses.mean()
+            # loss=losses.mean()+kl_divergence+lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
+            loss=losses.mean()+lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
             # check nan
             if torch.isnan(loss).any():
                 print("nan in loss")
@@ -204,7 +251,7 @@ def gaussian_kl_divergence(mu1, sigma1, mu2, sigma2):
     """
     var1 = sigma1.pow(2)
     var2 = sigma2.pow(2)
-    kl = (var1 / var2 + (mu2 - mu1).pow(2) / var2 - 1 + var2.log() - var1.log()).sum(-1) * 0.5
+    kl = (var1 / var2 + (mu2 - mu1).pow(2) / var2 - 1 + var2.log()*2 - var1.log()*2).sum(-1) * 0.5
     return kl.mean()
 def strange_DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epochs=100):
     assert expert_states.shape[0] == expert_actions.shape[0]
@@ -327,6 +374,7 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epoc
     undesirable_weight = 1.0  # You can adjust this weight
     LOG_STD_MIN = -20
     LOG_STD_MAX = 2
+    lambda_entropy = 0.001
 
     for i in range(epochs):
         for batch_no in range(expert_states.shape[0] // batch_size):
@@ -381,7 +429,8 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epoc
             rejected_losses = 1 - torch.sigmoid(beta * (kl_divergence - reject_logratios))
 
             losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
-            loss = losses.mean()
+            # loss = losses.mean()- lambda_entropy * entropy(sac_agent.ac.pi, state).mean()+kl_divergence
+            loss=losses.mean()
 
             total_loss += loss.item()
 
@@ -608,6 +657,10 @@ if __name__ == "__main__":
         exit(1)
     warmup_itr = 20
     prev_load_freq = 1
+    best_score_det = -1e6
+    best_score_sto = -1e6
+
+
         
 
     # common parameters
@@ -847,7 +900,10 @@ if __name__ == "__main__":
         real_return_det, real_return_sto = try_evaluate(itr, "Running")
         # loss_graph.append(loss.item())
         real_return_det_graph.append(real_return_det)
+        best_score_det = max(best_score_det, real_return_det)
         real_return_sto_graph.append(real_return_sto)
+        best_score_sto = max(best_score_sto, real_return_sto)
+        
         logger.record_tabular("Iteration", itr)
         logger.dump_tabular()
         with open(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv", "a") as f:
@@ -859,7 +915,7 @@ if __name__ == "__main__":
             else:
                 f.write(f"{method},{itr},{loss},{real_return_det},{real_return_sto}\n")
 
-    
+
     # draw loss real return det and sto by matplotlib
 
     plt.plot(loss_graph)
@@ -882,6 +938,8 @@ if __name__ == "__main__":
         plt.savefig(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}/negative_reward.png")
         plt.close()
 # add record loss real return det graph and sto graph to "baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv" there will be all kinds of method,dataframe column is method,itr,loss,real_return_det,real_return_sto,margin,positive_reward,negative_reward
+    print("Best score deterministic: ", best_score_det)
+    print("Best score stochastic: ", best_score_sto)
 
 
             
