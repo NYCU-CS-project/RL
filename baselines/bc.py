@@ -169,8 +169,8 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
 
 
             logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
-            u1= torch.exp(policy_chosen_logps)/(torch.exp(reference_chosen_logps)+1e-6)+1e-6
-            u2= torch.exp(policy_rejected_logps)/(torch.exp(reference_rejected_logps)+1e-6)+1e-6
+            # u1= torch.exp(policy_chosen_logps)/(torch.exp(reference_chosen_logps)+1e-6)+1e-6
+            # u2= torch.exp(policy_rejected_logps)/(torch.exp(reference_rejected_logps)+1e-6)+1e-6
 
 
             # reverse kl(original DPO)
@@ -214,7 +214,8 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             # real gail rewards
 
             # L = logistic loss
-            losses= -torch.nn.functional.logsigmoid(logits)
+            # losses= -torch.nn.functional.logsigmoid(beta*logits)
+            
             # L = tanh loss
             # losses = torch.nn.functional.tanh(logits)
             # L = hinge loss
@@ -224,10 +225,13 @@ def DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epoch
             # L = Huber loss
             # losses = torch.nn.functional.smooth_l1_loss(logits, torch.zeros_like(logits))
 
+            # L = SPPO loss
+            losses = (beta*chosen_logratios-1/2)**2+(beta*reject_logratios+1/2)**2
 
-            # loss = losses.mean()
+
+            loss = losses.mean()
             # loss=losses.mean()+kl_divergence+lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
-            loss=losses.mean()+lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
+            # loss=losses.mean()+lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
             # check nan
             if torch.isnan(loss).any():
                 print("nan in loss")
@@ -251,7 +255,7 @@ def gaussian_kl_divergence(mu1, sigma1, mu2, sigma2):
     """
     var1 = sigma1.pow(2)
     var2 = sigma2.pow(2)
-    kl = (var1 / var2 + (mu2 - mu1).pow(2) / var2 - 1 + var2.log()*2 - var1.log()*2).sum(-1) * 0.5
+    kl = (var1 / var2 + (mu2 - mu1).pow(2) / var2 - 1 + var2.log() - var1.log()).sum(-1) * 0.5
     return kl.mean()
 def strange_DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=False,epochs=100):
     assert expert_states.shape[0] == expert_actions.shape[0]
@@ -425,10 +429,13 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epoc
             total_margin += margin
 
             # Corrected KTO loss calculation
+            # L(x, y) := 1 - sigmoid(beta * ([log p_policy(y|x) - log p_reference(y|x)] - KL(p_policy || p_reference)))
             chosen_losses = 1 - torch.sigmoid(beta * (chosen_logratios - kl_divergence))
-            rejected_losses = 1 - torch.sigmoid(beta * (kl_divergence - reject_logratios))
+            # chosen_losses = 1 - torch.sigmoid(beta * (chosen_logratios - kl_divergence))
+            # rejected_losses = 1 - torch.sigmoid(beta * (kl_divergence - reject_logratios))
 
-            losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
+            # losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
+            losses = chosen_losses
             # loss = losses.mean()- lambda_entropy * entropy(sac_agent.ac.pi, state).mean()+kl_divergence
             loss=losses.mean()
 
@@ -655,7 +662,7 @@ if __name__ == "__main__":
         # throw error
         print("Invalid method")
         exit(1)
-    warmup_itr = 20
+    warmup_itr = 10
     prev_load_freq = 1
     best_score_det = -1e6
     best_score_sto = -1e6
@@ -702,14 +709,21 @@ if __name__ == "__main__":
         os.makedirs(graph_dir, exist_ok=True,mode=0o777)
     # environment
     env_fn = lambda: gym.make(env_name)
+    # type of environment
+
     gym_env = env_fn()
+    # gym_env = gym.make(env_name)
+
     state_size = gym_env.observation_space.shape[0]
     action_size = gym_env.action_space.shape[0]
     if state_indices == 'all':
         state_indices = list(range(state_size))
 
     # load expert samples from trained policy
+    print(torch.load(f'expert_data/states/{env_name}_airl.pt').numpy().shape)
     expert_state_trajs = torch.load(f'expert_data/states/{env_name}_airl.pt').numpy()[:, :, state_indices]
+    print(torch.load(f'expert_data/states/{env_name}_airl.pt').numpy().shape)
+
     expert_state_trajs = expert_state_trajs[:num_expert_trajs, :-1, :] # select first expert_episodes
     expert_states = expert_state_trajs.copy().reshape(-1, len(state_indices))
     print(expert_state_trajs.shape, expert_states.shape) # ignored starting state
@@ -732,6 +746,7 @@ if __name__ == "__main__":
         device=device,
         **v['sac']
     )
+
     loss_graph = []
     real_return_det_graph = []
     real_return_sto_graph = []
@@ -903,7 +918,7 @@ if __name__ == "__main__":
         best_score_det = max(best_score_det, real_return_det)
         real_return_sto_graph.append(real_return_sto)
         best_score_sto = max(best_score_sto, real_return_sto)
-        
+
         logger.record_tabular("Iteration", itr)
         logger.dump_tabular()
         with open(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv", "a") as f:
