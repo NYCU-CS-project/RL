@@ -374,10 +374,10 @@ def strange_DPO(sac_agent, prev_model, expert_states, expert_actions, greedy=Fal
 
     total_loss = total_loss / (epochs * expert_states.shape[0])
     return total_loss, total_margin, total_positive_reward, total_negative_reward, total_demo_loss
-def KTO(sac_agent, prev_model, expert_states, expert_actions,imperfect_states,imperfect_actions, greedy=False, epochs=100):
+def KTO(sac_agent, prev_model, expert_states, expert_actions,imperfect_states,imperfect_actions, greedy=False, epochs=100,whether_entropy=False):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 1000
+    batch_size = 256
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -390,7 +390,7 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions,imperfect_states,im
     lambda_entropy = 0.0001
 
     for i in range(epochs):
-        for batch_no in range(expert_states.shape[0] // batch_size):
+        for batch_no in range(1):
             # start_id = batch_no * batch_size
             # end_id = min((batch_no + 1) * batch_size, expert_states.shape[0])
             # state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
@@ -460,7 +460,11 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions,imperfect_states,im
 
             losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
             # losses = chosen_losses
-            loss = losses.mean()- lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
+            if whether_entropy:
+                loss = losses.mean()- lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
+            else:
+                loss = losses.mean()
+            # loss = losses.mean()- lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
             # loss -= lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
             # loss=losses.mean()
 
@@ -698,9 +702,10 @@ if __name__ == "__main__":
         print("Invalid method")
         exit(1)
     warmup_itr = 10
-    prev_load_freq = 400
+    prev_load_freq = 4000000
     best_score_det = -1e6
     best_score_sto = -1e6
+
 
 
         
@@ -739,11 +744,12 @@ if __name__ == "__main__":
     print('pid', pid)
     os.makedirs(os.path.join(log_folder, 'plt'))
     os.makedirs(os.path.join(log_folder, 'model'))
-    graph_dir = f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}"
-    if not os.path.exists(graph_dir):
-        os.makedirs(graph_dir, exist_ok=True,mode=0o777)
+
     # environment
     env_fn = lambda: gym.make(env_name)
+    if env_name == 'AntFH-v0':
+        env_fn = lambda: gym.make("Ant-v2")
+        print("ok")
     # type of environment
 
     gym_env = env_fn()
@@ -790,14 +796,28 @@ if __name__ == "__main__":
     # imperfect_data = torch.load(f'baselines/Hopper_random_1600.pt')
     # imperfect_states = imperfect_data['states']
     # imperfect_actions = imperfect_data['actions']
-    en="Hopper"
+    en=env_name.split('F')[0]
+    normalize_greedy_score = []
+    normalize_stochastic_score = []
+    if en=="Hopper":
+        expert_score=3607.890
+        random_score=832.351
+    elif en=="Walker2d":
+        expert_score=4924.278
+        random_score=91.524
+    elif en=="HalfCheetah":
+        expert_score=10656.426
+        random_score= -288.797
+    elif en=="Ant":
+        expert_score=4778.389
+        random_score=-388.064
     num_expert_trajs=400
     num_imperfect_trajs=1600
     import pickle
-    expert_data = pickle.load(open(f'baselines/{en}_expert_{num_expert_trajs}.pt', 'rb'))
+    expert_data = pickle.load(open(f'/mnt/nfs/work/c98181/imitation-dice/{en}_expert_{num_expert_trajs}.pt', 'rb'))
     expert_states = expert_data['states']
     expert_actions = expert_data['actions']
-    imperfect_data = pickle.load(open(f'baselines/{en}_random_{num_imperfect_trajs}.pt', 'rb'))
+    imperfect_data = pickle.load(open(f'/mnt/nfs/work/c98181/imitation-dice/{en}_random_{num_imperfect_trajs}.pt', 'rb'))
     imperfect_states = imperfect_data['states']
     imperfect_actions = imperfect_data['actions']
     import random
@@ -813,13 +833,16 @@ if __name__ == "__main__":
     # imperfect_states = imperfect_states[random_index,:]
     # imperfect_actions = imperfect_actions[random_index,:]
     # select first
-    expert_states = expert_states[3000:expert_transition_num+3000,:]
-    expert_actions = expert_actions[3000:expert_transition_num+3000,:]
+    # expert_states = expert_states[3000:expert_transition_num+3000,:]
+    # expert_actions = expert_actions[3000:expert_transition_num+3000,:]
     # imperfect_states = imperfect_states[:imperfect_transition_num,:]
     # imperfect_actions = imperfect_actions[:imperfect_transition_num,:]
     print(expert_states.shape, expert_actions.shape)
     print(imperfect_states.shape, imperfect_actions.shape)
     # exit(0)
+    graph_dir = f"baselines/{env_name}/exp_{num_expert_trajs}/random_{num_imperfect_trajs}/{method}"
+    if not os.path.exists(graph_dir):
+        os.makedirs(graph_dir, exist_ok=True,mode=0o777)
     replay_buffer = ReplayBuffer(
                     state_size, 
                     action_size,
@@ -1009,41 +1032,58 @@ if __name__ == "__main__":
         best_score_det = max(best_score_det, real_return_det)
         real_return_sto_graph.append(real_return_sto)
         best_score_sto = max(best_score_sto, real_return_sto)
+        normalize_greedy_score.append((real_return_det-random_score)/(expert_score-random_score))
+        
+        normalize_stochastic_score.append((real_return_sto-random_score)/(expert_score-random_score))
 
         logger.record_tabular("Iteration", itr)
         logger.dump_tabular()
-        # with open(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv", "a") as f:
-        #     if is_DPO or is_KTO:
-        #         if "warmup" in method and itr < warmup_itr:
-        #             f.write(f"{method}_warmup,{itr},{loss},{real_return_det},{real_return_sto}\n")
-        #         else:
-        #             f.write(f"{method},{itr},{loss},{real_return_det},{real_return_sto},{margin},{pos},{neg}\n")
-        #     else:
-        #         f.write(f"{method},{itr},{loss},{real_return_det},{real_return_sto}\n")
-
-
-    # draw loss real return det and sto by matplotlib
-
     plt.plot(loss_graph)
-    plt.savefig(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}/loss.png")
+    plt.savefig(f"{graph_dir}/loss.png")
     plt.close()
     plt.plot(real_return_det_graph)
-    plt.savefig(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}/Greedy.png")
+    plt.savefig(f"{graph_dir}/Greedy.png")
     plt.close()
     plt.plot(real_return_sto_graph)
-    plt.savefig(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}/Sample.png")
+    plt.savefig(f"{graph_dir}/Sample.png")
+    plt.plot(normalize_greedy_score)
+    plt.savefig(f"{graph_dir}/normalize_greedy.png")
     plt.close()
+    plt.plot(normalize_stochastic_score)
+    plt.savefig(f"{graph_dir}/normalize_stochastic.png")
+    plt.close()
+
+
     if is_DPO or is_KTO:
         plt.plot(margin_graph)
-        plt.savefig(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}/margin.png")
+        plt.savefig(f"{graph_dir}/margin.png")
         plt.close()
         plt.plot(positive_reward_graph)
-        plt.savefig(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}/positive_reward.png")
+        plt.savefig(f"{graph_dir}/positive_reward.png")
         plt.close()
         plt.plot(negative_reward_graph)
-        plt.savefig(f"baselines/plt/{env_name}/exp-{num_expert_trajs}/{method}/negative_reward.png")
+        plt.savefig(f"{graph_dir}/negative_reward.png")
         plt.close()
-# add record loss real return det graph and sto graph to "baselines/plt/{env_name}/exp-{num_expert_trajs}/total.csv" there will be all kinds of method,dataframe column is method,itr,loss,real_return_det,real_return_sto,margin,positive_reward,negative_reward
+    # save data to the same csv file in graph_dir including loss, greedy, stochastic, margin, positive reward, negative reward,norm_greedy,norm_stochastic
+    import csv
+    with open(f"{graph_dir}/total.csv", "a") as f:
+        writer = csv.writer(f)
+        writer.writerow(loss_graph)
+        writer.writerow(real_return_det_graph)
+        writer.writerow(real_return_sto_graph)
+        writer.writerow(normalize_greedy_score)
+        writer.writerow(normalize_stochastic_score)
+        if is_DPO or is_KTO:
+            writer.writerow(margin_graph)
+            writer.writerow(positive_reward_graph)
+            writer.writerow(negative_reward_graph)
+
+
+
+
+
+
+
     print("Best score deterministic: ", best_score_det)
     print("Best score stochastic: ", best_score_sto)
 
