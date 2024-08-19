@@ -95,7 +95,7 @@ def entropy(sac_agent, obs):
     std = torch.exp(log_std)
 
     # 计算高斯分布的熵
-    gaussian_entropy = 0.5 * torch.log(2 * np.pi * np.e * std**2).sum(-1)
+    gaussian_entropy = 0.5 * torch.log(2 * np.pi * np.e * std**2+1e-6).sum(-1)
 
     # 计算 tanh 变换的修正项
     pi_action = Normal(mu, std).rsample()
@@ -387,7 +387,7 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions,imperfect_states,im
     undesirable_weight = 1.0  # You can adjust this weight
     LOG_STD_MIN = -20
     LOG_STD_MAX = 2
-    lambda_entropy = 0.001
+    lambda_entropy = 0.0001
 
     for i in range(epochs):
         for batch_no in range(expert_states.shape[0] // batch_size):
@@ -460,14 +460,15 @@ def KTO(sac_agent, prev_model, expert_states, expert_actions,imperfect_states,im
 
             losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
             # losses = chosen_losses
-            # loss = losses.mean()- lambda_entropy * entropy(sac_agent.ac.pi, state).mean()+kl_divergence
-            loss=losses.mean()
+            loss = losses.mean()- lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
+            # loss -= lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
+            # loss=losses.mean()
 
             total_loss += loss.item()
 
             sac_agent.pi_optimizer.zero_grad()
             loss.backward()
-            # torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
             sac_agent.pi_optimizer.step()
 
     prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
@@ -545,6 +546,7 @@ def strange_KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=Fal
     LOG_STD_MIN = -20
     LOG_STD_MAX = 2
     total_demo_loss = 0
+    lambda_entropy = 0.0001
 
     for i in range(epochs):
         # for batch_no in range(expert_states.shape[0] // batch_size):
@@ -573,18 +575,22 @@ def strange_KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=Fal
             state = torch.FloatTensor(expert_states[start_id:end_id, :]).to(sac_agent.device)
             chosen_act = torch.FloatTensor(expert_actions[start_id:end_id, :]).to(sac_agent.device)
 
-            # Use the forward method for sampling
-            if greedy:
-                reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=True, with_logprob=True)
-            else:
-                reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=False, with_logprob=True)
+            # # Use the forward method for sampling
+            # if greedy:
+            #     reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=True, with_logprob=True)
+            # else:
+            #     reject_act, policy_rejected_logps = sac_agent.ac.pi(state, deterministic=False, with_logprob=True)
+            # uniformly random a  reject action
+            reject_act = torch.FloatTensor(np.random.uniform(-1, 1, chosen_act.shape)).to(sac_agent.device)
 
             # Clamp the reject action to the action space
             epsilon = 1e-6
             reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
+            chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
 
             # Calculate log probabilities for chosen actions
             policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+            policy_rejected_logps = sac_agent.ac.pi.log_prob(state, reject_act)
 
             # Calculate KL divergence
             net_out = sac_agent.ac.pi.net(state)
@@ -619,8 +625,12 @@ def strange_KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=Fal
             rejected_losses = 1 - torch.sigmoid(beta * (kl_divergence - reject_logratios))
 
             losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
-            loss = losses.mean()
+            # print(kl_divergence.mean().item())
+            # print kl_divergence
+            print("KL divergence: ", kl_divergence.mean().item())
 
+            loss = losses.mean()
+            # loss-=lambda_entropy * entropy(sac_agent.ac.pi, state).mean()
             total_loss += loss.item()
 
             sac_agent.pi_optimizer.zero_grad()
@@ -688,7 +698,7 @@ if __name__ == "__main__":
         print("Invalid method")
         exit(1)
     warmup_itr = 10
-    prev_load_freq = 4
+    prev_load_freq = 400
     best_score_det = -1e6
     best_score_sto = -1e6
 
@@ -790,8 +800,26 @@ if __name__ == "__main__":
     imperfect_data = pickle.load(open(f'baselines/{en}_random_{num_imperfect_trajs}.pt', 'rb'))
     imperfect_states = imperfect_data['states']
     imperfect_actions = imperfect_data['actions']
+    import random
+
     print(expert_states.shape, expert_actions.shape)
     print(imperfect_states.shape, imperfect_actions.shape)
+    expert_transition_num=1000
+    imperfect_transition_num=2400
+    # random_index=np.random.randint(0,expert_states.shape[0],expert_transition_num)
+    # expert_states = expert_states[random_index,:]
+    # expert_actions = expert_actions[random_index,:]
+    # random_index=np.random.randint(0,imperfect_states.shape[0],imperfect_transition_num)
+    # imperfect_states = imperfect_states[random_index,:]
+    # imperfect_actions = imperfect_actions[random_index,:]
+    # select first
+    expert_states = expert_states[3000:expert_transition_num+3000,:]
+    expert_actions = expert_actions[3000:expert_transition_num+3000,:]
+    # imperfect_states = imperfect_states[:imperfect_transition_num,:]
+    # imperfect_actions = imperfect_actions[:imperfect_transition_num,:]
+    print(expert_states.shape, expert_actions.shape)
+    print(imperfect_states.shape, imperfect_actions.shape)
+    # exit(0)
     replay_buffer = ReplayBuffer(
                     state_size, 
                     action_size,
@@ -867,7 +895,9 @@ if __name__ == "__main__":
             negative_reward_graph.append(neg)
             margin_graph.append(margin)
         elif method == "KTO_stochastic":
-            prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            if itr%prev_load_freq == 0:
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
             loss,margin,pos,neg = KTO(sac_agent,prev_model, expert_states, expert_actions,imperfect_states=imperfect_states,imperfect_actions=imperfect_actions, greedy=False,epochs = v['bc']['eval_freq'])
             positive_reward_graph.append(pos)
             negative_reward_graph.append(neg)
@@ -887,8 +917,8 @@ if __name__ == "__main__":
                 loss = stochastic_bc(sac_agent, expert_states, expert_actions, epochs = v['bc']['eval_freq'])
                 prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
             else:
-                # prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
-                loss,margin,pos,neg = KTO(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+                loss,margin,pos,neg = KTO(sac_agent,prev_model, expert_states, expert_actions,imperfect_actions=imperfect_actions,imperfect_states=imperfect_states, greedy=False,epochs = v['bc']['eval_freq'])
                 positive_reward_graph.append(pos)
                 negative_reward_graph.append(neg)
                 margin_graph.append(margin)
@@ -938,7 +968,7 @@ if __name__ == "__main__":
                 logger.record_tabular("strange KTO margin", margin)
                 logger.record_tabular("strange KTO positive reward", pos)
                 logger.record_tabular("strange KTO negative reward", neg)
-                logger.record_tabular("strange KTO demonstration loss", demons.item())
+                logger.record_tabular("strange KTO demonstration loss", demons)
                 loss_graph.append(loss)
             else:
                 if "warmup" in method and itr < warmup_itr:
