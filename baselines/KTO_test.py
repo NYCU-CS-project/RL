@@ -18,7 +18,7 @@ from utils.plots.train_plot import plot_disc as visual_disc
 import datetime
 import dateutil.tz
 import json, copy
-
+is_ant=False
 def try_evaluate(itr: int, policy_type: str):
     assert policy_type in ["Running"]
     update_time = itr * v['bc']['eval_freq']
@@ -26,13 +26,13 @@ def try_evaluate(itr: int, policy_type: str):
 
     # eval real reward
     real_return_det = eval.evaluate_real_return(sac_agent.get_action, env_fn(), 
-                                            v['bc']['eval_episodes'], v['env']['T'], True)
+                                            v['bc']['eval_episodes'], v['env']['T'], True,is_ant)
 
     print(f"real det return avg: {real_return_det:.2f}")
     logger.record_tabular("Real Det Return", round(real_return_det, 2))
 
     real_return_sto = eval.evaluate_real_return(sac_agent.get_action, env_fn(), 
-                                            v['bc']['eval_episodes'], v['env']['T'], False)
+                                            v['bc']['eval_episodes'], v['env']['T'], False,is_ant)
 
     print(f"real sto return avg: {real_return_sto:.2f}")
     logger.record_tabular("Real Sto Return", round(real_return_sto, 2))
@@ -645,8 +645,113 @@ def strange_KTO(sac_agent, prev_model, expert_states, expert_actions, greedy=Fal
     total_loss = total_loss / (epochs * expert_states.shape[0])
     return total_loss, total_margin, total_positive_reward, total_negative_reward, total_demo_loss
 
+def SPPO_from_rand(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epochs=100,whether_entropy=False):
+    assert expert_states.shape[0] == expert_actions.shape[0]
+    prev_model.eval()
+    batch_size = 256
+    total_loss = 0
+    total_margin = 0
+    total_positive_reward = 0
+    total_negative_reward = 0
+    beta = 0.1
+
+    LOG_STD_MIN = -20
+    LOG_STD_MAX = 2
+    # lambda_entropy = 0.0001
+    gap_weight=1e3
 
 
+
+    for i in range(epochs):
+        for batch_no in range(1):
+            expert_batch = np.random.randint(0, expert_states.shape[0], batch_size)
+
+            state = torch.FloatTensor(expert_states[expert_batch, :]).to(sac_agent.device)
+            chosen_act = torch.FloatTensor(expert_actions[expert_batch, :]).to(sac_agent.device)
+            reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(sac_agent.device)
+
+
+            
+            # Clamp the reject action to the action space
+            epsilon = 1e-6
+            reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
+            chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
+            # Calculate log probabilities for chosen actions
+            policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+            policy_rejected_logps = sac_agent.ac.pi.log_prob(state, reject_act)
+            reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+            reference_rejected_logps = prev_model.log_prob(state, reject_act)
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            reject_logratios = policy_rejected_logps - reference_rejected_logps
+            loss= (beta*chosen_logratios-gap_weight/2)**2+(beta*reject_logratios+gap_weight/2)**2
+            total_loss += loss.item()
+            total_margin += (chosen_logratios - reject_logratios).mean().item()
+            total_positive_reward += chosen_logratios.mean().item()
+            total_negative_reward += reject_logratios.mean().item()
+
+            sac_agent.pi_optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+            sac_agent.pi_optimizer.step()
+
+    prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+
+    total_loss = total_loss / (epochs * expert_states.shape[0])
+    return total_loss, total_margin, total_positive_reward, total_negative_reward
+def SPPO_from_prev(sac_agent, prev_model, expert_states, expert_actions, greedy=False, epochs=100,whether_entropy=False):
+    assert expert_states.shape[0] == expert_actions.shape[0]
+    prev_model.eval()
+    batch_size = 256
+    total_loss = 0
+    total_margin = 0
+    total_positive_reward = 0
+    total_negative_reward = 0
+    beta = 0.1
+
+    LOG_STD_MIN = -20
+    LOG_STD_MAX = 2
+    # lambda_entropy = 0.0001
+    gap_weight=1e3
+
+
+
+    for i in range(epochs):
+        for batch_no in range(1):
+            expert_batch = np.random.randint(0, expert_states.shape[0], batch_size)
+
+            state = torch.FloatTensor(expert_states[expert_batch, :]).to(sac_agent.device)
+            chosen_act = torch.FloatTensor(expert_actions[expert_batch, :]).to(sac_agent.device)
+            with torch.no_grad():
+                reject_act, policy_rejected_logps = prev_model(state, deterministic=False, with_logprob=True)
+
+
+            
+            # Clamp the reject action to the action space
+            epsilon = 1e-6
+            reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
+            chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
+            # Calculate log probabilities for chosen actions
+            policy_chosen_logps = sac_agent.ac.pi.log_prob(state, chosen_act)
+            policy_rejected_logps = sac_agent.ac.pi.log_prob(state, reject_act)
+            reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+            reference_rejected_logps = prev_model.log_prob(state, reject_act)
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            reject_logratios = policy_rejected_logps - reference_rejected_logps
+            loss= (beta*chosen_logratios-gap_weight/2)**2+(beta*reject_logratios+gap_weight/2)**2
+            total_loss += loss.item()
+            total_margin += (chosen_logratios - reject_logratios).mean().item()
+            total_positive_reward += chosen_logratios.mean().item()
+            total_negative_reward += reject_logratios.mean().item()
+
+            sac_agent.pi_optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(sac_agent.ac.pi.parameters(), max_norm=1.0)
+            sac_agent.pi_optimizer.step()
+
+    prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+
+    total_loss = total_loss / (epochs * expert_states.shape[0])
+    return total_loss, total_margin, total_positive_reward, total_negative_reward
 
 
 if __name__ == "__main__":
@@ -697,14 +802,26 @@ if __name__ == "__main__":
     elif sys.argv[2] == "strange_DPO_warmup":
         method = "strange_DPO_warmup"
         is_DPO = True
+    elif sys.argv[2] == "SPPO_from_rand":
+        method = "SPPO_from_rand"
+        is_KTO = True
+    elif sys.argv[2] == "SPPO_from_prev":
+        method = "SPPO_from_prev"
+        is_KTO = True
     else:
         # throw error
         print("Invalid method")
         exit(1)
+    # argv[3] is num_expert_trajs
+    num_expert_trajs = int(sys.argv[3])
+    # argv[4] is num_imperfect_trajs
+    num_imperfect_trajs = int(sys.argv[4])
     warmup_itr = 10
     prev_load_freq = 4000000
     best_score_det = -1e6
     best_score_sto = -1e6
+    if "SPPO" in method:
+        prev_load_freq=1
 
 
 
@@ -714,7 +831,7 @@ if __name__ == "__main__":
     env_name = v['env']['env_name']
     state_indices = v['env']['state_indices']
     seed = v['seed']
-    num_expert_trajs = v['bc']['expert_episodes']
+    # num_expert_trajs = v['bc']['expert_episodes']
 
     # system: device, threads, seed, pid
     device = torch.device(f"cuda:{v['cuda']}" if torch.cuda.is_available() and v['cuda'] >= 0 else "cpu")
@@ -748,12 +865,23 @@ if __name__ == "__main__":
     # environment
     env_fn = lambda: gym.make(env_name)
     if env_name == 'AntFH-v0':
-        env_fn = lambda: gym.make("Ant-v2")
-        print("ok")
+        is_ant = True
+        
+        
+    #     env_fn = lambda: gym.make("Ant-v3")
+    #     print("ok")
     # type of environment
 
     gym_env = env_fn()
+
+    # gym_env =  gym.make(env_name)
+
+    # state= gym_env.reset()
+    # print(gym_env)
+    # print(gym_env.action_space)
+    # print(gym_env.observation_space)
     # gym_env = gym.make(env_name)
+    # exit()
 
     state_size = gym_env.observation_space.shape[0]
     action_size = gym_env.action_space.shape[0]
@@ -811,8 +939,8 @@ if __name__ == "__main__":
     elif en=="Ant":
         expert_score=4778.389
         random_score=-388.064
-    num_expert_trajs=400
-    num_imperfect_trajs=1600
+    # num_expert_trajs=400
+    # num_imperfect_trajs=400
     import pickle
     expert_data = pickle.load(open(f'/mnt/nfs/work/c98181/imitation-dice/{en}_expert_{num_expert_trajs}.pt', 'rb'))
     expert_states = expert_data['states']
@@ -821,6 +949,10 @@ if __name__ == "__main__":
     imperfect_states = imperfect_data['states']
     imperfect_actions = imperfect_data['actions']
     import random
+    if is_ant:
+        # for all obs:obs = np.concatenate((obs[:27], [0.]), -1)
+        expert_states = np.concatenate((expert_states[:,:27],np.zeros((expert_states.shape[0],1)),expert_states[:,27:]),-1)
+        imperfect_states = np.concatenate((imperfect_states[:,:27],np.zeros((imperfect_states.shape[0],1)),imperfect_states[:,27:]),-1)
 
     print(expert_states.shape, expert_actions.shape)
     print(imperfect_states.shape, imperfect_actions.shape)
@@ -981,6 +1113,20 @@ if __name__ == "__main__":
                 positive_reward_graph.append(pos)
                 negative_reward_graph.append(neg)
                 margin_graph.append(margin)
+        elif method == "SPPO_from_rand":
+            if itr%prev_load_freq == 0:
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            loss,margin,pos,neg = SPPO_from_rand(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
+            positive_reward_graph.append(pos)
+            negative_reward_graph.append(neg)
+            margin_graph.append(margin)
+        elif method == "SPPO_from_prev":
+            if itr%prev_load_freq == 0:
+                prev_model.load_state_dict(sac_agent.ac.pi.state_dict())
+            loss,margin,pos,neg = SPPO_from_prev(sac_agent,prev_model, expert_states, expert_actions, greedy=False,epochs = v['bc']['eval_freq'])
+            positive_reward_graph.append(pos)
+            negative_reward_graph.append(neg)
+            margin_graph.append(margin)
         
 
         # draw loss real return det and sto
@@ -1066,17 +1212,12 @@ if __name__ == "__main__":
         plt.close()
     # save data to the same csv file in graph_dir including loss, greedy, stochastic, margin, positive reward, negative reward,norm_greedy,norm_stochastic
     import csv
-    with open(f"{graph_dir}/total.csv", "a") as f:
+    # need to know which env and which method
+    with open(f"{graph_dir}/{en}_{method}.csv", mode='w') as f:
         writer = csv.writer(f)
-        writer.writerow(loss_graph)
-        writer.writerow(real_return_det_graph)
-        writer.writerow(real_return_sto_graph)
-        writer.writerow(normalize_greedy_score)
-        writer.writerow(normalize_stochastic_score)
-        if is_DPO or is_KTO:
-            writer.writerow(margin_graph)
-            writer.writerow(positive_reward_graph)
-            writer.writerow(negative_reward_graph)
+        writer.writerow(["loss", "greedy", "stochastic", "margin", "positive reward", "negative reward","norm_greedy","norm_stochastic"])
+        for i in range(len(loss_graph)):
+            writer.writerow([loss_graph[i],real_return_det_graph[i],real_return_sto_graph[i],margin_graph[i],positive_reward_graph[i],negative_reward_graph[i],normalize_greedy_score[i],normalize_stochastic_score[i]])
 
 
 
