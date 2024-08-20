@@ -14,7 +14,10 @@ def evaluate_real_return(policy, env, n_episodes, horizon, deterministic):
         ret = 0
 
         for t in range(horizon):
-            action = policy(obs, deterministic)
+            state=torch.FloatTensor(obs).to(policy.device)
+            action = policy(state, deterministic, with_logprob=False)
+            # to numpy
+            action = (action[0]).cpu().detach().numpy()
             obs, rew, done, _ = env.step(action) # NOTE: assume rew=0 after done=True for evaluation
             ret += rew 
             if done:
@@ -42,6 +45,7 @@ class Actor(nn.Module):
         self.act_limit = act_limit
         self.LOG_STD_MAX = 2
         self.LOG_STD_MIN = -20
+        self.device = 'cuda'
 
     def forward(self, obs, deterministic=False, with_logprob=True):
         net_out = self.net(obs)
@@ -109,7 +113,7 @@ def gaussian_kl_divergence(mu1, sigma1, mu2, sigma2):
     var2 = sigma2.pow(2)
     kl = (var1 / var2 + (mu2 - mu1).pow(2) / var2 - 1 + var2.log() - var1.log()).sum(-1) * 0.5
     return kl.mean()
-def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,random=False,clip_grad=False):
+def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
     batch_size = 256
@@ -126,12 +130,18 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
             state = torch.FloatTensor(expert_states[idx]).to(agent.device)
             chosen_act = torch.FloatTensor(expert_actions[idx]).to(agent.device)
 
-            if random:
-                 reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
-            else:
+            if reject_from=="random":
+                    reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
+            elif reject_from=="policy":
                 with torch.no_grad():
-
-                    reject_act, reference_rejected_logps = prev_model(state, deterministic=False, with_logprob=True)
+                    
+                        reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
+            elif reject_from=="add_gaussian_noise_expert_act":
+                with torch.no_grad():
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+            elif reject_from=="add_noise_expert_act":
+                with torch.no_grad():
+                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)
             # Clamp the reject action to the action space
             chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
             reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
@@ -175,7 +185,7 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
 
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
-def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100, beta=0.1, random=False, clip_grad=False):
+def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
     batch_size = 256
@@ -194,12 +204,18 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
             state = torch.FloatTensor(expert_states[idx]).to(agent.device)
             chosen_act = torch.FloatTensor(expert_actions[idx]).to(agent.device)
 
-            if random:
-                reject_act = torch.FloatTensor(np.random.uniform(-1, 1, chosen_act.shape)).to(agent.device)
-            else:
+            if reject_from=="random":
+                    reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
+            elif reject_from=="policy":
                 with torch.no_grad():
-                    reject_act, reference_rejected_logps = prev_model(state, deterministic=False, with_logprob=True)
-
+                    
+                        reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
+            elif reject_from=="add_gaussian_noise_expert_act":
+                with torch.no_grad():
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+            elif reject_from=="add_noise_expert_act":
+                with torch.no_grad():
+                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)
 
             
             # Clamp the reject action to the action space
@@ -257,7 +273,7 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
 
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
-def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, eta=1e3, random=False, clip_grad=False):
+def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, eta=1e3, reject_from="random", clip_grad=False):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
     batch_size = 256
@@ -276,11 +292,19 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
             state = torch.FloatTensor(expert_states[idx]).to(agent.device)
             chosen_act = torch.FloatTensor(expert_actions[idx]).to(agent.device)
 
-            if random:
-                reject_act = torch.FloatTensor(np.random.uniform(-1, 1, chosen_act.shape)).to(agent.device)
-            else:
+            if reject_from=="random":
+                    reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
+            elif reject_from=="policy":
                 with torch.no_grad():
-                    reject_act, reference_rejected_logps = prev_model(state, deterministic=False, with_logprob=True)
+                    
+                        reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
+            elif reject_from=="add_gaussian_noise_expert_act":
+                with torch.no_grad():
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+            elif reject_from=="add_noise_expert_act":
+                with torch.no_grad():
+                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)                    
+
 
 
             # Clamp the reject action to the action space
@@ -301,8 +325,8 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
             chosen_logratios = policy_chosen_logps - reference_chosen_logps
             reject_logratios = policy_rejected_logps - reference_rejected_logps
             
-            positive_reward = chosen_logratios.detach().mean().item()
-            negative_reward = reject_logratios.detach().mean().item()
+            positive_reward = (chosen_logratios-eta/2).pow(2).detach().mean().item()
+            negative_reward = (reject_logratios+eta/2).pow(2).detach().mean().item()
             margin = positive_reward - negative_reward
             
             total_positive_reward += positive_reward
@@ -324,7 +348,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
 
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
-def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,random=False,clip_grad=False):
+def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,reject_from="random",clip_grad=False):
     assert expert_states.shape[0] == expert_actions.shape[0]
     batch_size = 256
     total_loss = 0
@@ -340,12 +364,21 @@ def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,
             idx = np.random.randint(0, expert_states.shape[0], batch_size)
             state = torch.FloatTensor(expert_states[idx]).to(agent.device)
             chosen_act = torch.FloatTensor(expert_actions[idx]).to(agent.device)
-            if random:
-                 reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
-            else:
+            if reject_from=="random":
+                    reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
+            elif reject_from=="policy":
                 with torch.no_grad():
+                    
+                        reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
+            elif reject_from=="add_gaussian_noise_expert_act":
+                with torch.no_grad():
+                    # data + torch.randn_like(data) * std + mean
+                    # std=0.1 mean=0
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+            elif reject_from=="add_noise_expert_act":
+                with torch.no_grad():
+                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)
 
-                    reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             # Clamp the reject action to the action space
             chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
             reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
@@ -391,15 +424,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Configuration for expert dataset and model parameters")
 
     # Required arguments
-    parser.add_argument("--expert_obs_path", type=str, required=True, help="Path to the expert observations")
-    parser.add_argument("--expert_act_path", type=str, required=True, help="Path to the expert actions")
+    parser.add_argument("--expert_path", type=str, required=True, help="Path to the expert dataset")
     parser.add_argument("--load_freq", type=int, required=True, help="Frequency for loading previous model")
     parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO'], help="Method to use")
-    parser.add_argument("--random_sample", action="store_true", help="Whether to randomly generate samples")
+    parser.add_argument("--reject_from", type=str, default="random", choices=['random', 'policy', 'add_gaussian_noise_expert_act', 'add_noise_expert_act'], help="Method to use")
     parser.add_argument("--weight_decay", action="store_true", help="Whether to use weight decay for the optimizer")
     parser.add_argument("--env_name", type=str, required=True, help="Name of the environment")
     parser.add_argument("--total_steps", type=int, default=500000, help="Total training steps")
-    parser.add_argument("--eval_freq", type=int, default=5000, help="Evaluation frequency")
+    parser.add_argument("--eval_freq", type=int, default=1000, help="Evaluation frequency")
 
     # Optional arguments
     parser.add_argument("--beta", type=float, default=0.1, help="Beta parameter (optional)")
@@ -415,7 +447,7 @@ def get_log_path(args):
     filename_parts = [
         f"{args.method}",
         f"load_freq_{args.load_freq}",
-        f"random_{args.random_sample}",
+        f"random_{args.reject_from}",
         f"weight_decay_{args.weight_decay}",
 
     ]
@@ -446,21 +478,21 @@ if __name__ == "__main__":
     args = parse_args()
     
     # Print configuration
-    print(f"Using expert dataset from {args.expert_obs_path} and {args.expert_act_path}")
+    print(f"Using expert dataset from {args.expert_path}")
     print(f"Loading previous model every {args.load_freq} steps")
     print(f"Using weight decay: {args.weight_decay}")
     print(f"Using environment: {args.env_name}")
     print(f"Total training steps: {args.total_steps}")
     print(f"Evaluation frequency: {args.eval_freq}")
-    print(f"Random sample: {args.random_sample}")
+    print(f"Random sample: {args.reject_from}")
     print(f"Method: {args.method}")
     print(f"Beta: {args.beta}")
     print(f"Gamma: {args.gamma}")
     print(f"Eta: {args.eta}")
 
     # Load expert dataset
-    expert_obs = np.load(args.expert_obs_path)
-    expert_act = np.load(args.expert_act_path)
+    expert_obs = np.load(args.expert_path+"_obs.npy")
+    expert_act = np.load(args.expert_path+"_act.npy")
 
     # Initialize environment
     assert args.env_name in ['Hopper-v2', 'HalfCheetah-v2', 'Walker2d-v2', 'Ant-v2', 'Humanoid-v2']
@@ -468,8 +500,8 @@ if __name__ == "__main__":
     env.seed(0)  # Assuming Seed is defined as 0
 
     # Initialize agent and previous model
-    agent = Agent(expert_obs.shape[1], expert_act.shape[1], weight_decay=args.weight_decay, device='cuda')
-    prev_model = deepcopy(agent.ac)
+    agent = Agent(expert_obs.shape[1], expert_act.shape[1], weight_decay=args.weight_decay, device='cuda').to('cuda')
+    prev_model = deepcopy(agent.ac).to('cuda')
 
     # Initialize tracking variables
     loss_list = []
@@ -490,18 +522,23 @@ if __name__ == "__main__":
     print(f"Stochastic real return: {real_return_sto}")
     return_det_list.append(real_return_det)
     return_sto_list.append(real_return_sto)
+    loss_list.append(torch.tensor(0))
+    margin_list.append(0)
+    positive_reward_list.append(0)
+    negative_reward_list.append(0)
+
 
     # Main training loop
     for step in range(int(args.total_steps / args.eval_freq)):
         # Training step
         if args.method == 'DPO':
-            loss, margin, positive_reward, negative_reward = DPO(agent, prev_model, expert_obs, expert_act, random=args.random_sample, clip_grad=False, beta=args.beta)
+            loss, margin, positive_reward, negative_reward = DPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta)
         elif args.method == 'KTO':
-            loss, margin, positive_reward, negative_reward = KTO(agent, prev_model, expert_obs, expert_act, random=args.random_sample, clip_grad=False, beta=args.beta)
+            loss, margin, positive_reward, negative_reward = KTO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta)
         elif args.method == 'SPPO':
-            loss, margin, positive_reward, negative_reward = SPPO(agent, prev_model, expert_obs, expert_act, random=args.random_sample, clip_grad=False, eta=args.eta)
+            loss, margin, positive_reward, negative_reward = SPPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, eta=args.eta)
         elif args.method == 'SimPO':
-            loss, margin, positive_reward, negative_reward = SimPO(agent, expert_obs, expert_act, random=args.random_sample, clip_grad=False, beta=args.beta, gamma=args.gamma)
+            loss, margin, positive_reward, negative_reward = SimPO(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, gamma=args.gamma)
         else:
             raise ValueError("Invalid method")
         
@@ -517,20 +554,26 @@ if __name__ == "__main__":
 
 
         # Evaluate if needed
-        if step % args.eval_freq == 0:
-            print(f"---------------------------------\nStep {step * args.eval_freq}")
-            print(f"Loss: {loss}")
-            print(f"Margin: {margin}")
-            print(f"Positive reward: {positive_reward}")
-            print(f"Negative reward: {negative_reward}")
-            print("Evaluating real return")
-            real_return_det = evaluate_real_return(agent.ac, env, n_episodes, horizon, deterministic=True)
-            real_return_sto = evaluate_real_return(agent.ac, env, n_episodes, horizon, deterministic=False)
-            print(f"Deterministic real return: {real_return_det}")
-            print(f"Stochastic real return: {real_return_sto}")
-            return_det_list.append(real_return_det)
-            return_sto_list.append(real_return_sto)
-
+        print(f"---------------------------------\nStep {step * args.eval_freq}")
+        print(f"Loss: {loss}")
+        print(f"Margin: {margin}")
+        print(f"Positive reward: {positive_reward}")
+        print(f"Negative reward: {negative_reward}")
+        print("---------------------------------")
+        print("Evaluating real return")
+        real_return_det = evaluate_real_return(agent.ac, env, n_episodes, horizon, deterministic=True)
+        real_return_sto = evaluate_real_return(agent.ac, env, n_episodes, horizon, deterministic=False)
+        print(f"Deterministic real return: {real_return_det}")
+        print(f"Stochastic real return: {real_return_sto}")
+        return_det_list.append(real_return_det)
+        return_sto_list.append(real_return_sto)
+    # all to numpy  [to_cpu_numpy(item) for item in tensor_or_list]
+    loss_list = np.array([item.detach().numpy for item in loss_list])
+    margin_list = np.array([item for item in margin_list])
+    positive_reward_list = np.array([item for item in positive_reward_list])
+    negative_reward_list = np.array([item for item in negative_reward_list])
+    return_det_list = np.array([item for item in return_det_list])
+    return_sto_list = np.array([item for item in return_sto_list])
     # Save results
     df = pd.DataFrame({
         'loss': loss_list,
