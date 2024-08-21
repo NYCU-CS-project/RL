@@ -438,7 +438,11 @@ def parse_args():
 def get_log_path(args):
     # Create base directory structure
     base_dir = os.path.join("logs", args.env_name)
+    # Different dataset diffrerent directory
+    base_dir = os.path.join(base_dir, os.path.basename(args.expert_path))
     
+
+
     # Create method-specific filename
     filename_parts = [
         f"{args.method}",
