@@ -422,7 +422,7 @@ def parse_args():
     parser.add_argument("--reject_from", type=str, default="random", choices=['random', 'policy', 'add_gaussian_noise_expert_act', 'add_noise_expert_act'], help="Method to use")
     parser.add_argument("--weight_decay", action="store_true", help="Whether to use weight decay for the optimizer")
     parser.add_argument("--env_name", type=str, required=True, help="Name of the environment")
-    parser.add_argument("--total_steps", type=int, default=10000, help="Total training steps")
+    parser.add_argument("--total_steps", type=int, default=500000, help="Total training steps")
     parser.add_argument("--eval_freq", type=int, default=1000, help="Evaluation frequency")
 
     # Optional arguments
