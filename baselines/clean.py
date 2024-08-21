@@ -134,11 +134,11 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
                     reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
             elif reject_from=="policy":
                 with torch.no_grad():
-                    
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
+                    # reject from Normal(chosen_act, noise_level)
+                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
             # Clamp the reject action to the action space
@@ -211,7 +211,7 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
+                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
 
@@ -298,7 +298,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
+                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)           
 
@@ -369,7 +369,7 @@ def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
+                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
 
@@ -528,13 +528,13 @@ if __name__ == "__main__":
     for step in range(int(args.total_steps / args.eval_freq)):
         # Training step
         if args.method == 'DPO':
-            loss, margin, positive_reward, negative_reward = DPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta)
+            loss, margin, positive_reward, negative_reward = DPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'KTO':
-            loss, margin, positive_reward, negative_reward = KTO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta)
+            loss, margin, positive_reward, negative_reward = KTO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'SPPO':
-            loss, margin, positive_reward, negative_reward = SPPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, eta=args.eta)
+            loss, margin, positive_reward, negative_reward = SPPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, eta=args.eta, noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'SimPO':
-            loss, margin, positive_reward, negative_reward = SimPO(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, gamma=args.gamma)
+            loss, margin, positive_reward, negative_reward = SimPO(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, gamma=args.gamma, noise_level=args.noise_level,steps=args.eval_freq)
         else:
             raise ValueError("Invalid method")
         
