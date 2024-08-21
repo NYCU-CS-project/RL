@@ -179,7 +179,7 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
             if clip_grad:
                 torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
             agent.pi_optimizer.step()
-
+    total_loss=total_loss.mean().item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
 def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False, noise_level=0.6):
@@ -264,7 +264,7 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
             if clip_grad:
                 torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
             agent.pi_optimizer.step()
-
+    total_loss=total_loss.mean().item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
 def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, eta=1e3, reject_from="random", clip_grad=False, noise_level=0.6):
@@ -333,7 +333,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
             if clip_grad:
                 torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
             agent.pi_optimizer.step()
-
+    total_loss=total_loss.mean().item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
 def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,reject_from="random",clip_grad=False,noise_level=0.6):
@@ -391,7 +391,7 @@ def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,
             if clip_grad:
                 torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
             agent.pi_optimizer.step()
-
+    total_loss=total_loss.mean().item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 ########################################################################################
 # Entrypoint
@@ -422,7 +422,7 @@ def parse_args():
     parser.add_argument("--reject_from", type=str, default="random", choices=['random', 'policy', 'add_gaussian_noise_expert_act', 'add_noise_expert_act'], help="Method to use")
     parser.add_argument("--weight_decay", action="store_true", help="Whether to use weight decay for the optimizer")
     parser.add_argument("--env_name", type=str, required=True, help="Name of the environment")
-    parser.add_argument("--total_steps", type=int, default=500000, help="Total training steps")
+    parser.add_argument("--total_steps", type=int, default=10000, help="Total training steps")
     parser.add_argument("--eval_freq", type=int, default=1000, help="Evaluation frequency")
 
     # Optional arguments
@@ -528,7 +528,7 @@ if __name__ == "__main__":
 
 
     # Main training loop
-    for step in range(int(args.total_steps / args.eval_freq)):
+    for step in range(1,1+int(args.total_steps / args.eval_freq)):
         # Training step
         if args.method == 'DPO':
             loss, margin, positive_reward, negative_reward = DPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
@@ -567,12 +567,13 @@ if __name__ == "__main__":
         return_det_list.append(real_return_det)
         return_sto_list.append(real_return_sto)
     # all to numpy  [to_cpu_numpy(item) for item in tensor_or_list]
-    loss_list = np.array([item.detach().numpy for item in loss_list])
-    margin_list = np.array([item for item in margin_list])
-    positive_reward_list = np.array([item for item in positive_reward_list])
-    negative_reward_list = np.array([item for item in negative_reward_list])
-    return_det_list = np.array([item for item in return_det_list])
-    return_sto_list = np.array([item for item in return_sto_list])
+    loss_list = np.array(loss_list)
+
+    margin_list = np.array(margin_list)
+    positive_reward_list = np.array(positive_reward_list)
+    negative_reward_list = np.array(negative_reward_list)
+    return_det_list = np.array(return_det_list)
+    return_sto_list = np.array(return_sto_list)
     # Save results
     df = pd.DataFrame({
         'loss': loss_list,
