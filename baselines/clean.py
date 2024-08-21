@@ -113,7 +113,7 @@ def gaussian_kl_divergence(mu1, sigma1, mu2, sigma2):
     var2 = sigma2.pow(2)
     kl = (var1 / var2 + (mu2 - mu1).pow(2) / var2 - 1 + var2.log() - var1.log()).sum(-1) * 0.5
     return kl.mean()
-def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False):
+def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
     batch_size = 256
@@ -138,10 +138,9 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
             elif reject_from=="add_noise_expert_act":
-                with torch.no_grad():
-                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)
+                reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
             # Clamp the reject action to the action space
             chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
             reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
@@ -185,7 +184,7 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
 
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
-def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False):
+def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False, noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
     batch_size = 256
@@ -212,10 +211,9 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
             elif reject_from=="add_noise_expert_act":
-                with torch.no_grad():
-                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)
+                reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
 
             
             # Clamp the reject action to the action space
@@ -273,7 +271,7 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
 
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
-def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, eta=1e3, reject_from="random", clip_grad=False):
+def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, eta=1e3, reject_from="random", clip_grad=False, noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
     batch_size = 256
@@ -300,10 +298,9 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
             elif reject_from=="add_noise_expert_act":
-                with torch.no_grad():
-                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)                    
+                reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)           
 
 
 
@@ -348,7 +345,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
 
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
-def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,reject_from="random",clip_grad=False):
+def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     batch_size = 256
     total_loss = 0
@@ -372,12 +369,9 @@ def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
                 with torch.no_grad():
-                    # data + torch.randn_like(data) * std + mean
-                    # std=0.1 mean=0
-                    reject_act = chosen_act + torch.randn_like(chosen_act) * 0.1
+                    reject_act = chosen_act + torch.randn_like(chosen_act) * noise_level
             elif reject_from=="add_noise_expert_act":
-                with torch.no_grad():
-                    reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-0.1,0.1,chosen_act.shape)).to(agent.device)
+                reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
 
             # Clamp the reject action to the action space
             chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
@@ -437,6 +431,7 @@ def parse_args():
     parser.add_argument("--beta", type=float, default=0.1, help="Beta parameter (optional)")
     parser.add_argument("--gamma", type=float, default=1.0, help="Gamma parameter (optional)")
     parser.add_argument("--eta", type=float, default=1e3, help="Eta parameter (optional)")
+    parser.add_argument("--noise_level", type=float, default=0.6, help="Noise level for adding noise to expert actions (optional)")
 
     return parser.parse_args()
 def get_log_path(args):
@@ -449,6 +444,7 @@ def get_log_path(args):
         f"load_freq_{args.load_freq}",
         f"random_{args.reject_from}",
         f"weight_decay_{args.weight_decay}",
+        f"noise_{args.noise_level:.1f}",
 
     ]
     
