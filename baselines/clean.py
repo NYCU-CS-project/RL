@@ -334,6 +334,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
                 torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
             agent.pi_optimizer.step()
     total_loss=total_loss.item()
+    total_margin=total_margin.item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
 def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,reject_from="random",clip_grad=False,noise_level=0.6):
@@ -417,7 +418,7 @@ def parse_args():
 
     # Required arguments
     parser.add_argument("--expert_path", type=str, required=True, help="Path to the expert dataset")
-    parser.add_argument("--load_freq", type=int, required=True, help="Frequency for loading previous model")
+    parser.add_argument("--load_freq", type=int, default=0, help="Frequency for loading previous model")
     parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO'], help="Method to use")
     parser.add_argument("--reject_from", type=str, default="random", choices=['random', 'policy', 'add_gaussian_noise_expert_act', 'add_noise_expert_act'], help="Method to use")
     parser.add_argument("--weight_decay", action="store_true", help="Whether to use weight decay for the optimizer")
