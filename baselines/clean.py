@@ -313,27 +313,27 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
             chosen_logratios = policy_chosen_logps - reference_chosen_logps
             reject_logratios = policy_rejected_logps - reference_rejected_logps
             
-            positive_reward = (chosen_logratios-eta/2).pow(2).mean().item()
-            negative_reward = (reject_logratios+eta/2).pow(2).mean().item() 
+            positive_reward = (chosen_logratios-eta/2).pow(2).mean()
+            negative_reward = (reject_logratios+eta/2).pow(2).mean()
             margin = positive_reward - negative_reward
             
-            total_positive_reward += positive_reward
-            total_negative_reward += negative_reward
+            total_positive_reward += positive_reward.item()
+            total_negative_reward += negative_reward.item()
             total_margin += margin
 
 
             # SPPO loss
             losses = positive_reward+ negative_reward
 
-            loss = losses.mean()
-            total_loss += loss.sum()
+            loss = losses
+            total_loss += loss
 
             agent.pi_optimizer.zero_grad()
             loss.backward()
             if clip_grad:
                 torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
             agent.pi_optimizer.step()
-    total_loss=total_loss.mean().item()
+    total_loss=total_loss.item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 
 def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,reject_from="random",clip_grad=False,noise_level=0.6):
