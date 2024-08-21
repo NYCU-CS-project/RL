@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
-Seed=0
 ########################################################################################
 # Eval 
 ########################################################################################
@@ -136,9 +135,8 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
                 with torch.no_grad():
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
-                with torch.no_grad():
-                    # reject from Normal(chosen_act, noise_level)
-                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
+
+                reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
             # Clamp the reject action to the action space
@@ -207,11 +205,9 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
                     reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
             elif reject_from=="policy":
                 with torch.no_grad():
-                    
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
-                with torch.no_grad():
-                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
+                reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
 
@@ -279,10 +275,6 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
     total_margin = 0
     total_positive_reward = 0
     total_negative_reward = 0
-    desirable_weight = 1.0  # You can adjust this weight
-    undesirable_weight = 1.0  # You can adjust this weight
-    LOG_STD_MIN = -20
-    LOG_STD_MAX = 2
     epsilon = 1e-3
     for i in range(steps):
             # random sample a batch of expert states and actions
@@ -297,8 +289,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
                     
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
-                with torch.no_grad():
-                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
+                reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)           
 
@@ -322,8 +313,8 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
             chosen_logratios = policy_chosen_logps - reference_chosen_logps
             reject_logratios = policy_rejected_logps - reference_rejected_logps
             
-            positive_reward = (chosen_logratios-eta/2).pow(2).detach().mean().item()
-            negative_reward = (reject_logratios+eta/2).pow(2).detach().mean().item()
+            positive_reward = (chosen_logratios-eta/2).pow(2).mean().item()
+            negative_reward = (reject_logratios+eta/2).pow(2).mean().item() 
             margin = positive_reward - negative_reward
             
             total_positive_reward += positive_reward
@@ -332,7 +323,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
 
 
             # SPPO loss
-            losses = (chosen_logratios-eta/2).pow(2)+ (reject_logratios+eta/2).pow(2)
+            losses = positive_reward+ negative_reward
 
             loss = losses.mean()
             total_loss += loss.sum()
@@ -368,8 +359,7 @@ def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,
                     
                         reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
             elif reject_from=="add_gaussian_noise_expert_act":
-                with torch.no_grad():
-                    reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
+                reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
             elif reject_from=="add_noise_expert_act":
                 reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
 
@@ -413,6 +403,14 @@ import torch
 from copy import deepcopy
 import gym
 import pandas as pd
+import random
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Configuration for expert dataset and model parameters")
@@ -432,6 +430,8 @@ def parse_args():
     parser.add_argument("--gamma", type=float, default=1.0, help="Gamma parameter (optional)")
     parser.add_argument("--eta", type=float, default=1e3, help="Eta parameter (optional)")
     parser.add_argument("--noise_level", type=float, default=0.6, help="Noise level for adding noise to expert actions (optional)")
+    # seed
+    parser.add_argument("--seed", type=int, default=0, help="Seed for reproducibility")
 
     return parser.parse_args()
 def get_log_path(args):
@@ -485,6 +485,9 @@ if __name__ == "__main__":
     print(f"Beta: {args.beta}")
     print(f"Gamma: {args.gamma}")
     print(f"Eta: {args.eta}")
+    print(f"Noise level: {args.noise_level}")
+    print(f"Seed: {args.seed}")
+    set_seed(args.seed)
 
     # Load expert dataset
     expert_obs = np.load(args.expert_path+"_obs.npy")
