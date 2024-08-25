@@ -48,6 +48,8 @@ def read_csv_data(csv_files):
             df = pd.read_csv(file)
             method, params, reject_from = parse_filename(os.path.basename(file))
             key = (method, frozenset(params.items()), reject_from)
+            if reject_from not in ["policy"]:
+                continue
             if key not in data:
                 data[key] = {}
             data[key][dataset] = df
@@ -85,29 +87,53 @@ def select_all_methods(data, return_type,filter=None):
                 'data': datasets
             }
     return all_methods
-def plot_returns(data, return_type, is_normalized=False,filters=None,params=False):
+def plot_returns(data, return_type, is_normalized=False,filters=None,params=False,expert_dataset=None,task=None):
     # params=True
-    # filters = ["CPOP", "CPO"]
-    # best_methods = select_best_methods(data, return_type, filter=filters)
-    best_methods = select_all_methods(data, return_type, filter=filters)
+    # filters=["CPO"]
+    best_methods = select_best_methods(data, return_type, filter=filters)
+    # best_methods = select_all_methods(data, return_type, filter=filters)
     
     fig, axs = plt.subplots(4, 1, figsize=(24, 40), sharex=True)
     colors = plt.cm.tab10(np.linspace(0, 1, len(best_methods)))
     
-    expert_score = 10656.426
-    random_score = -288.797
+    if task == "logs/Walker2d-v2":
+        # expert_score = 4924.278
+        # random_score = 91.524
+        expert_score=4592.3
+        random_score=-0.48
+    elif task == "logs/HalfCheetah-v2":
+        # expert_score = 10656.426
+        # random_score = -288.797
+        expert_score=12135.0
+        random_score=-278.6
+    elif task == "logs/Ant-v2":
+        expert_score = 4778.389
+        random_score = -338.064
+    elif task == "logs/Hopper-v2":
+        # expert_score = 3607.890
+        # random_score = 832.351
+        expert_score=3234.3
+        random_score=-19.5
     
-    expert_datasets = ['halfcheetah-100', 'halfcheetah-10', 'halfcheetah-5', 'halfcheetah-2']
+    # expert_datasets = ['halfcheetah-100', 'halfcheetah-10', 'halfcheetah-5', 'halfcheetah-2']
     baseline_scores = {
         'halfcheetah-100': 0.9334,
         'halfcheetah-10': 0.9269,
         'halfcheetah-5': 0.9018,
-        'halfcheetah-2': 0.7687
+        'halfcheetah-2': 0.7687,
+        "walker2d-100": 1.0765,
+        "walker2d-10": 1.0762,
+        "walker2d-5": 1.0789,
+        "walker2d-2": 1.0555,
+        "hopper-2": 1.0851,
+        "hopper-5": 1.1114,
+        "hopper-10": 1.1156,
+        "hopper-100": 1.1022,
     }
     
-    total_timesteps = 500000
+    total_timesteps = 200000
     
-    for idx, dataset in enumerate(expert_datasets):
+    for idx, dataset in enumerate(expert_dataset):
         ax = axs[idx]
         for (method, method_data), color in zip(best_methods.items(), colors):
             if dataset in method_data['data']:
@@ -184,17 +210,31 @@ def main():
         'halfcheetah-5',
         'halfcheetah-2'
     ]
+    # base_path = 'logs/Walker2d-v2'
+    # expert_datasets = [
+    #     'walker2d-100',
+    #     'walker2d-10',
+    #     'walker2d-5',
+    #     'walker2d-2'
+    # ]
+    # base_path="logs/Hopper-v2"
+    # expert_datasets=[
+    #     "hopper-100",
+    #     "hopper-10",
+    #     "hopper-5",
+    #     "hopper-2"
+    # ]
 
     csv_files = find_csv_files(base_path, expert_datasets)
     data = read_csv_data(csv_files)
 
     # Plot original returns
-    plot_returns(data, 'deterministic_return')
-    plot_returns(data, 'stochastic_return')
+    plot_returns(data, 'deterministic_return',  expert_dataset=expert_datasets,task=base_path)
+    plot_returns(data, 'stochastic_return',expert_dataset=expert_datasets,task=base_path)
 
     # Plot normalized returns
-    plot_returns(data, 'deterministic_return', is_normalized=True)
-    plot_returns(data, 'stochastic_return', is_normalized=True)
+    plot_returns(data, 'deterministic_return', is_normalized=True,expert_dataset=expert_datasets,task=base_path)
+    plot_returns(data, 'stochastic_return', is_normalized=True,expert_dataset=expert_datasets,task=base_path)
 
     print("Visualization completed. Check the current directory for output images.")
 
