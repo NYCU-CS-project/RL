@@ -289,7 +289,85 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
             logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
 
             # reverse kl(original DPO)
-            losses = (-F.logsigmoid(beta * logits)*(1-label_smoothing)-F.logsigmoid(-beta * logits)*(label_smoothing))
+            losses = -F.logsigmoid(beta * logits)
+
+
+            loss = losses.mean()
+            total_loss += loss.sum()
+
+            agent.pi_optimizer.zero_grad()
+            loss.backward()
+            if clip_grad:
+                torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
+            agent.pi_optimizer.step()
+    total_loss=total_loss.mean().item()
+    return total_loss, total_margin, total_positive_reward, total_negative_reward
+def TDPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
+    assert expert_states.shape[0] == expert_actions.shape[0]
+    prev_model.eval()
+    batch_size = 256
+    total_loss = 0
+    total_margin = 0
+    total_positive_reward = 0
+    total_negative_reward = 0
+    # beta=1
+    clip_grad=True
+    epsilon = 1e-3
+    alpha=0.5
+    TDPO2=True
+
+    for i in range(steps):
+            # random sample a batch of expert states and actions
+            idx = np.random.randint(0, expert_states.shape[0], batch_size)
+            state = torch.FloatTensor(expert_states[idx]).to(agent.device)
+            chosen_act = torch.FloatTensor(expert_actions[idx]).to(agent.device)
+
+            if reject_from=="random":
+                    reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
+            elif reject_from=="policy":
+                with torch.no_grad():
+                        reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
+            elif reject_from=="add_gaussian_noise_expert_act":
+
+                reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
+            elif reject_from=="add_noise_expert_act":
+                reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
+            # Clamp the reject action to the action space
+            chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
+            reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
+
+            # Calculate log probabilities for chosen actions
+            policy_chosen_logps = agent.ac.log_prob(state, chosen_act)
+            policy_rejected_logps = agent.ac.log_prob(state, reject_act)
+
+            with torch.no_grad():
+
+
+                reference_chosen_logps = prev_model.log_prob(state, chosen_act)
+                reference_rejected_logps = prev_model.log_prob(state, reject_act)
+
+
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            reject_logratios = policy_rejected_logps - reference_rejected_logps
+            
+            positive_reward = chosen_logratios.detach().mean().item()
+            negative_reward = reject_logratios.detach().mean().item()
+            margin = positive_reward - negative_reward
+            
+            total_positive_reward += positive_reward
+            total_negative_reward += negative_reward
+            total_margin += margin
+
+
+            logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
+
+            yw_kl=(reference_chosen_logps.exp()*(reference_chosen_logps-policy_chosen_logps)).sum(-1)
+            yl_kl=(reference_rejected_logps.exp()*(reference_rejected_logps-policy_rejected_logps)).sum(-1)
+            if TDPO2:
+                 values=logits-alpha*(yl_kl-yw_kl.detach())
+            else:
+                values=logits-(yl_kl-yw_kl)
+            losses = -F.logsigmoid(beta * (values))
 
 
             loss = losses.mean()
@@ -1795,7 +1873,7 @@ def parse_args():
     # Required arguments
     parser.add_argument("--expert_path", type=str, required=True, help="Path to the expert dataset")
     parser.add_argument("--load_freq", type=int, default=0, help="Frequency for loading previous model")
-    parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO',"CPO","ORPO","RRHF","SLiC_HF","CPOP","CKTO","CSPPO","AOTpair","AOT","BCO","APOzero","APOdown","IPO","EXO","NCA","robustDPO","DPOP","GPODPO"], help="Method to use")
+    parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO',"CPO","ORPO","RRHF","SLiC_HF","CPOP","CKTO","CSPPO","AOTpair","AOT","BCO","APOzero","APOdown","IPO","EXO","NCA","robustDPO","DPOP","GPODPO","TDPO"], help="Method to use")
     parser.add_argument("--reject_from", type=str, default="policy", choices=['random', 'policy', 'add_gaussian_noise_expert_act', 'add_noise_expert_act'], help="Method to use")
     parser.add_argument("--actor_type", type=str, default="continuous", choices=["continuous","quantile","discrete","flow","wishart"], help="Type of actor to use")
     parser.add_argument("--weight_decay", action="store_true", help="Whether to use weight decay for the optimizer")
@@ -1833,7 +1911,7 @@ def get_log_path(args):
     ]
     
     # Add method-specific parameters
-    if args.method in ['DPO', 'KTO', 'CPO', 'ORPO', 'CKTO',"AOTpair","AOT","APOzero","APOdown","BCO","IPO","EXO","NCA","robustDPO","GPODPO"]:
+    if args.method in ['DPO', 'KTO', 'CPO', 'ORPO', 'CKTO',"AOTpair","AOT","APOzero","APOdown","BCO","IPO","EXO","NCA","robustDPO","GPODPO","TDPO"]:
         filename_parts.append(f"beta_{args.beta:.1f}")
     elif args.method in ['CPOP',"DPOP"]:
         filename_parts.append(f"beta_{args.beta:.1f}_Lambda_{args.Lambda:.1f}")
@@ -1937,6 +2015,8 @@ if __name__ == "__main__":
             loss, margin, positive_reward, negative_reward = NCA(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'GPODPO':
             loss, margin, positive_reward, negative_reward = GPODPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
+        elif args.method == 'TDPO':
+            loss, margin, positive_reward, negative_reward = TDPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
 
         elif args.method == 'IPO':
             loss, margin, positive_reward, negative_reward = IPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
