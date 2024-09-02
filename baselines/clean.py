@@ -302,7 +302,7 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
             agent.pi_optimizer.step()
     total_loss=total_loss.mean().item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
-def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,label_smoothing=0,Lambda=50):
+def DPOP(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,label_smoothing=0,Lambda=50):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
     batch_size = 256
@@ -1724,7 +1724,7 @@ def parse_args():
     # Required arguments
     parser.add_argument("--expert_path", type=str, required=True, help="Path to the expert dataset")
     parser.add_argument("--load_freq", type=int, default=0, help="Frequency for loading previous model")
-    parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO',"CPO","ORPO","RRHF","SLiC_HF","CPOP","CKTO","CSPPO","AOTpair","AOT","BCO","APOzero","APOdown","IPO","EXO","NCA","robustDPO"], help="Method to use")
+    parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO',"CPO","ORPO","RRHF","SLiC_HF","CPOP","CKTO","CSPPO","AOTpair","AOT","BCO","APOzero","APOdown","IPO","EXO","NCA","robustDPO","DPOP"], help="Method to use")
     parser.add_argument("--reject_from", type=str, default="policy", choices=['random', 'policy', 'add_gaussian_noise_expert_act', 'add_noise_expert_act'], help="Method to use")
     parser.add_argument("--actor_type", type=str, default="continuous", choices=["continuous","quantile","discrete","flow","wishart"], help="Type of actor to use")
     parser.add_argument("--weight_decay", action="store_true", help="Whether to use weight decay for the optimizer")
@@ -1764,7 +1764,7 @@ def get_log_path(args):
     # Add method-specific parameters
     if args.method in ['DPO', 'KTO', 'CPO', 'ORPO', 'CKTO',"AOTpair","AOT","APOzero","APOdown","BCO","IPO","EXO","NCA","robustDPO"]:
         filename_parts.append(f"beta_{args.beta:.1f}")
-    elif args.method == 'CPOP':
+    elif args.method in ['CPOP',"DPOP"]:
         filename_parts.append(f"beta_{args.beta:.1f}_Lambda_{args.Lambda:.1f}")
     elif args.method in ['SPPO', 'CSPPO']:
         filename_parts.append(f"eta_{args.eta:.1f}")
@@ -1869,6 +1869,8 @@ if __name__ == "__main__":
             loss, margin, positive_reward, negative_reward = IPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'robustDPO':
             loss, margin, positive_reward, negative_reward = robustDPO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
+        elif args.method == 'DPOP':
+            loss, margin, positive_reward, negative_reward = DPOP(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
 
         elif args.method == 'KTO':
             loss, margin, positive_reward, negative_reward = KTO(agent, prev_model, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta,noise_level=args.noise_level,steps=args.eval_freq)
