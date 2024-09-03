@@ -234,14 +234,15 @@ def discrete_kl_divergence(logits1, logits2):
 def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,label_smoothing=0):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
     total_negative_reward = 0
     # beta=1
-    clip_grad=True
+    clip_grad=False
     epsilon = 1e-3
+    distance_weight=1
 
     for i in range(steps):
             # random sample a batch of expert states and actions
@@ -274,8 +275,11 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
                 reference_rejected_logps = prev_model.log_prob(state, reject_act)
 
 
-            chosen_logratios = policy_chosen_logps - reference_chosen_logps
-            reject_logratios = policy_rejected_logps - reference_rejected_logps
+            # chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            # reject_logratios = policy_rejected_logps - reference_rejected_logps
+            chosen_logratios = policy_chosen_logps 
+            reject_logratios = policy_rejected_logps 
+            
             
             positive_reward = chosen_logratios.detach().mean().item()
             negative_reward = reject_logratios.detach().mean().item()
@@ -287,6 +291,8 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
 
 
             logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
+            # logits=policy_chosen_logps - policy_rejected_logps 
+
 
             # reverse kl(original DPO)
             losses = -F.logsigmoid(beta * logits)
@@ -301,11 +307,12 @@ def DPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
                 torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
             agent.pi_optimizer.step()
     total_loss=total_loss.mean().item()
+    
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 def TDPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -380,10 +387,10 @@ def TDPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=10
             agent.pi_optimizer.step()
     total_loss=total_loss.mean().item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
-def DPOP(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,label_smoothing=0,Lambda=50):
+def DPOP(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,label_smoothing=0,Lambda=5):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -438,7 +445,7 @@ def DPOP(agent, prev_model, expert_states, expert_actions, greedy=False,steps=10
             logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
 
             # reverse kl(original DPO)
-            losses = (-F.logsigmoid(beta * logits)*(1-label_smoothing)-F.logsigmoid(-beta * logits)*(label_smoothing))-Lambda(max(0,reference_chosen_logps-policy_chosen_logps))
+            losses = (-F.logsigmoid(beta * logits))-Lambda*(torch.clamp(reference_chosen_logps-policy_chosen_logps,min=0))
 
 
             loss = losses.mean()
@@ -454,7 +461,7 @@ def DPOP(agent, prev_model, expert_states, expert_actions, greedy=False,steps=10
 def GPODPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -506,13 +513,13 @@ def GPODPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=
             total_margin += margin
 
 
-            logits = policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps
+            logits = (policy_chosen_logps - policy_rejected_logps - reference_chosen_logps + reference_rejected_logps)
 
             # taylor expansion of DPO
-            losses=-torch.log(2)+logits/2-logits**2/8
+            losses=logits/2-(logits**2)/8
 
 
-            loss = losses.mean()
+            loss = losses.mean()-np.log(2)
             total_loss += loss.sum()
 
             agent.pi_optimizer.zero_grad()
@@ -526,13 +533,13 @@ def GPODPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=
 def robustDPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,label_smoothing=0.1):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
     total_negative_reward = 0
     # beta=1
-    clip_grad=True
+    clip_grad=False
     epsilon = 1e-3
 
     for i in range(steps):
@@ -597,7 +604,7 @@ def robustDPO(agent, prev_model, expert_states, expert_actions, greedy=False,ste
 def EXO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,label_smoothing=1e-3):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -668,7 +675,7 @@ def EXO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
 def IPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -738,7 +745,7 @@ def IPO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
 def APOzero(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -808,7 +815,7 @@ def APOzero(agent, prev_model, expert_states, expert_actions, greedy=False,steps
 def APOdown(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -878,7 +885,7 @@ def APOdown(agent, prev_model, expert_states, expert_actions, greedy=False,steps
 def BCO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -944,7 +951,7 @@ def BCO(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
 def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False, noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1026,8 +1033,8 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
 
             # chosen_losses = 1 - torch.sigmoid(beta * (chosen_logratios - kl_divergence))
             # rejected_losses = 1 - torch.sigmoid(beta * (kl_divergence - reject_logratios))
-            chosen_losses = 1 - torch.sigmoid(beta * (chosen_logratios -rejected_kl))
-            rejected_losses = 1 - torch.sigmoid(beta * (chosen_kl - reject_logratios))
+            chosen_losses = 1 - torch.sigmoid(beta * (chosen_logratios -chosen_kl))
+            rejected_losses = 1 - torch.sigmoid(beta * ( rejected_kl- reject_logratios))
 
             losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
             loss = losses.mean()
@@ -1046,7 +1053,7 @@ def KTO(agent, prev_model, expert_states, expert_actions,greedy=False, steps=100
 def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, eta=1e3, reject_from="random", clip_grad=False, noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1117,7 +1124,7 @@ def SPPO(agent, prev_model, expert_states, expert_actions, greedy=False, steps=1
 def AOT(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False, noise_level=0.6, AOT_loss="logistic", sort_type="hard_sort", label_smoothing=0):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1187,7 +1194,7 @@ def AOT(agent, prev_model, expert_states, expert_actions, greedy=False, steps=10
 def AOTpair(agent, prev_model, expert_states, expert_actions, greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False, noise_level=0.6, AOT_loss="logistic", sort_type="hard_sort", label_smoothing=0.1):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1256,7 +1263,7 @@ def AOTpair(agent, prev_model, expert_states, expert_actions, greedy=False, step
 def NCA(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1328,7 +1335,7 @@ def NCA(agent, prev_model, expert_states, expert_actions, greedy=False,steps=100
 ########################################################################################
 def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,gamma=1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1385,7 +1392,7 @@ def SimPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=2.0,
 
 def CPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1413,20 +1420,20 @@ def CPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,re
             reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
 
             # Calculate log probabilities for chosen actions
-            chosen_logratios = agent.ac.log_prob(state, chosen_act)
-            reject_logratios = agent.ac.log_prob(state, reject_act)
+            policy_chosen_logps = agent.ac.log_prob(state, chosen_act)
+            policy_reject_logps = agent.ac.log_prob(state, reject_act)
 
 
-            positive_reward = chosen_logratios.detach().mean().item()
-            negative_reward = reject_logratios.detach().mean().item()
+            positive_reward = policy_chosen_logps.detach().mean().item()
+            negative_reward = policy_reject_logps.detach().mean().item()
             margin = positive_reward - negative_reward
             
             total_positive_reward += positive_reward
             total_negative_reward += negative_reward
             total_margin += margin
+            logits= policy_chosen_logps - policy_reject_logps
 
-
-            losses = -torch.nn.functional.logsigmoid(beta * chosen_logratios-beta*reject_logratios)-chosen_logratios
+            losses = -torch.nn.functional.logsigmoid(beta * logits)
 
             loss = losses.mean()
             total_loss += loss.sum()
@@ -1440,7 +1447,7 @@ def CPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,re
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 def CPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1481,7 +1488,7 @@ def CPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,re
             total_margin += margin
 
 
-            losses = -torch.nn.functional.logsigmoid(beta * chosen_logratios-beta*reject_logratios)-chosen_logratios
+            losses = -F.logsigmoid(beta * chosen_logratios-beta*reject_logratios)
 
             loss = losses.mean()
             total_loss += loss.sum()
@@ -1495,7 +1502,7 @@ def CPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,re
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 def CPOP(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6,Lambda=500):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1549,10 +1556,80 @@ def CPOP(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,r
             agent.pi_optimizer.step()
     total_loss=total_loss.mean().item()
     return total_loss, total_margin, total_positive_reward, total_negative_reward
+def KTOclosed(agent, expert_states, expert_actions,greedy=False, steps=100, beta=0.1, reject_from="random", clip_grad=False, noise_level=0.6):
+    assert expert_states.shape[0] == expert_actions.shape[0]
+    batch_size = 1000
+    total_loss = 0
+    total_margin = 0
+    total_positive_reward = 0
+    total_negative_reward = 0
+    desirable_weight = 1.75  # You can adjust this weight
+    undesirable_weight = 1.0  # You can adjust this weight
+    LOG_STD_MIN = -20
+    LOG_STD_MAX = 2
 
+    epsilon = 1e-3
+
+    for i in range(steps):
+            # random sample a batch of expert states and actions
+            idx = np.random.randint(0, expert_states.shape[0], batch_size)
+            state = torch.FloatTensor(expert_states[idx]).to(agent.device)
+            chosen_act = torch.FloatTensor(expert_actions[idx]).to(agent.device)
+
+            if reject_from=="random":
+                    reject_act = torch.FloatTensor(np.random.uniform(-1,1,chosen_act.shape)).to(agent.device)
+            elif reject_from=="policy":
+                with torch.no_grad():
+                        reject_act, reference_rejected_logps = agent.ac(state, deterministic=False, with_logprob=True)
+            elif reject_from=="add_gaussian_noise_expert_act":
+                reject_act = chosen_act + torch.FloatTensor(np.random.normal(0,noise_level,chosen_act.shape)).to(agent.device)
+            elif reject_from=="add_noise_expert_act":
+                reject_act = chosen_act + torch.FloatTensor(np.random.uniform(-noise_level,noise_level,chosen_act.shape)).to(agent.device)
+
+            
+            # Clamp the reject action to the action space
+            reject_act = torch.clamp(reject_act, -1+epsilon, 1-epsilon)
+            chosen_act = torch.clamp(chosen_act, -1+epsilon, 1-epsilon)
+            # Calculate log probabilities for chosen actions
+            policy_chosen_logps = agent.ac.log_prob(state, chosen_act)
+            policy_rejected_logps = agent.ac.log_prob(state, reject_act)
+            net_out = agent.ac.net(state)
+            policy_mu = agent.ac.mu_layer(net_out)
+            policy_log_std = torch.clamp(agent.ac.log_std_layer(net_out), LOG_STD_MIN, LOG_STD_MAX)
+            policy_std = torch.exp(policy_log_std)
+            # Calculate closed form entropy
+            policy_entropy = (0.5 * ( np.log(2 * np.pi * np.e))+policy_log_std).mean()
+            # kto loss
+            chosen_losses = 1 - torch.sigmoid(beta * (policy_chosen_logps -policy_entropy))
+            rejected_losses = 1 - torch.sigmoid(beta * (policy_entropy - policy_rejected_logps))
+            positive_reward = (chosen_losses).detach().mean().item()
+            negative_reward = (rejected_losses).detach().mean().item()
+            margin = positive_reward - negative_reward
+            total_positive_reward += positive_reward
+            total_negative_reward += negative_reward
+            total_margin += margin
+
+            losses = torch.cat((desirable_weight * chosen_losses, undesirable_weight * rejected_losses), 0)
+            loss = losses.mean()
+            
+
+
+
+
+
+            total_loss += loss.item()
+
+            agent.pi_optimizer.zero_grad()
+            loss.backward()
+            if clip_grad:
+                torch.nn.utils.clip_grad_norm_(agent.ac.parameters(), max_norm=1.0)
+            agent.pi_optimizer.step()
+    total_loss=total_loss
+    # print(total_KL)
+    return total_loss, total_margin, total_positive_reward, total_negative_reward
 def ORPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1595,10 +1672,10 @@ def ORPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,r
 
             log_odds=(policy_chosen_logps-policy_rejected_logps)-(torch.log1p(-torch.exp(policy_chosen_logps))-torch.log1p(-torch.exp(policy_rejected_logps)))
             sig_ratio=torch.sigmoid(log_odds)
-            ratio=torch.log(sig_ratio)
+            ratio=torch.log(sig_ratio+epsilon)
             losses=beta*ratio
 
-            loss = policy_chosen_logps-losses.mean()
+            loss =( policy_chosen_logps-losses).mean()
             total_loss += loss.sum()
 
             agent.pi_optimizer.zero_grad()
@@ -1611,7 +1688,7 @@ def ORPO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,r
 
 def RRHF(agent, expert_states, expert_actions, greedy=False,steps=100,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1666,7 +1743,7 @@ def RRHF(agent, expert_states, expert_actions, greedy=False,steps=100,reject_fro
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 def SLiC_HF(agent, expert_states, expert_actions, greedy=False,steps=100,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1721,7 +1798,7 @@ def SLiC_HF(agent, expert_states, expert_actions, greedy=False,steps=100,reject_
     return total_loss, total_margin, total_positive_reward, total_negative_reward
 def CKTO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,reject_from="random",clip_grad=False,noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1790,7 +1867,7 @@ def CKTO(agent, expert_states, expert_actions, greedy=False,steps=100,beta=0.1,r
 def CSPPO(agent, expert_states, expert_actions, greedy=False, steps=100, eta=1e3, reject_from="policy", clip_grad=False, noise_level=0.6):
     assert expert_states.shape[0] == expert_actions.shape[0]
     prev_model.eval()
-    batch_size = 256
+    batch_size = 1000
     total_loss = 0
     total_margin = 0
     total_positive_reward = 0
@@ -1873,7 +1950,7 @@ def parse_args():
     # Required arguments
     parser.add_argument("--expert_path", type=str, required=True, help="Path to the expert dataset")
     parser.add_argument("--load_freq", type=int, default=0, help="Frequency for loading previous model")
-    parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO',"CPO","ORPO","RRHF","SLiC_HF","CPOP","CKTO","CSPPO","AOTpair","AOT","BCO","APOzero","APOdown","IPO","EXO","NCA","robustDPO","DPOP","GPODPO","TDPO"], help="Method to use")
+    parser.add_argument("--method", type=str, required=True, choices=['DPO', 'KTO', 'SPPO', 'SimPO',"CPO","ORPO","RRHF","SLiC_HF","CPOP","CKTO","CSPPO","AOTpair","AOT","BCO","APOzero","APOdown","IPO","EXO","NCA","robustDPO","DPOP","GPODPO","TDPO","KTOclosed","KTOestimated"], help="Method to use")
     parser.add_argument("--reject_from", type=str, default="policy", choices=['random', 'policy', 'add_gaussian_noise_expert_act', 'add_noise_expert_act'], help="Method to use")
     parser.add_argument("--actor_type", type=str, default="continuous", choices=["continuous","quantile","discrete","flow","wishart"], help="Type of actor to use")
     parser.add_argument("--weight_decay", action="store_true", help="Whether to use weight decay for the optimizer")
@@ -1911,7 +1988,7 @@ def get_log_path(args):
     ]
     
     # Add method-specific parameters
-    if args.method in ['DPO', 'KTO', 'CPO', 'ORPO', 'CKTO',"AOTpair","AOT","APOzero","APOdown","BCO","IPO","EXO","NCA","robustDPO","GPODPO","TDPO"]:
+    if args.method in ['DPO', 'KTO', 'CPO', 'ORPO', 'CKTO',"AOTpair","AOT","APOzero","APOdown","BCO","IPO","EXO","NCA","robustDPO","GPODPO","TDPO","KTOclosed","KTOestimated"]:
         filename_parts.append(f"beta_{args.beta:.1f}")
     elif args.method in ['CPOP',"DPOP"]:
         filename_parts.append(f"beta_{args.beta:.1f}_Lambda_{args.Lambda:.1f}")
@@ -2043,6 +2120,10 @@ if __name__ == "__main__":
             loss, margin, positive_reward, negative_reward = SimPO(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, gamma=args.gamma, noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'CPO':
             loss, margin, positive_reward, negative_reward = CPO(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, noise_level=args.noise_level,steps=args.eval_freq)
+        elif args.method == 'KTOestimated':
+            loss, margin, positive_reward, negative_reward = KTOestimated(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, noise_level=args.noise_level,steps=args.eval_freq)
+        elif args.method == 'KTOclosed':
+            loss, margin, positive_reward, negative_reward = KTOclosed(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'ORPO':
             loss, margin, positive_reward, negative_reward = ORPO(agent, expert_obs, expert_act, reject_from=args.reject_from, clip_grad=False, beta=args.beta, noise_level=args.noise_level,steps=args.eval_freq)
         elif args.method == 'RRHF':
