@@ -1,0 +1,7 @@
+OS: Linux-5.15.0-43-generic-x86_64-with-debian-bullseye-sid #46~20.04.1-Ubuntu SMP Thu Jul 14 15:20:17 UTC 2022
+Python: 3.7.10
+Stable-Baselines3: 1.6.1a0
+PyTorch: 1.11.0
+GPU Enabled: True
+Numpy: 1.21.2
+Gym: 0.21.0
